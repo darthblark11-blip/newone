@@ -1,9 +1,10 @@
 // Run the real shared enemy loop in separate baseline/current VM contexts.
-// Outside active Red Mesa, positions, decisions and RNG consumption must agree.
+// Stealth now applies to regular hostile humans. Dedicated AI, civilians,
+// allies and explicit combat scenes must retain their decisions and RNG use.
 const assert=require('node:assert/strict'),fs=require('fs'),os=require('os'),path=require('path');
 const {execFileSync}=require('child_process');
 const folder=fs.mkdtempSync(path.join(os.tmpdir(),'mesa-scope-')),baseline=path.join(folder,'before.js');
-fs.writeFileSync(baseline,execFileSync('git',['show','370d076:game.js'],{cwd:path.join(__dirname,'..'),maxBuffer:16e6}));
+fs.writeFileSync(baseline,execFileSync('git',['show','5ec3bc1:game.js'],{cwd:path.join(__dirname,'..'),maxBuffer:16e6}));
 function load(file){
  const previous=process.env.GAME_JS;process.env.GAME_JS=file;delete require.cache[require.resolve('./harness')];
  const h=require('./harness');if(previous===undefined)delete process.env.GAME_JS;else process.env.GAME_JS=previous;
@@ -12,25 +13,39 @@ function load(file){
 }
 try{
  const before=load(baseline),after=load(path.join(__dirname,'../game.js'));let checks=0;
- for(const [level,bounty,stage]of [[1,null,null],[2,null,null],[3,null,null],[3,'DUST_RAIL','ACTIVE'],[3,'COYOTE_MINE','ACTIVE'],[1,'RED_MESA','ACTIVE'],[3,'RED_MESA','AVAILABLE']]){
+ const fixtures=[
+  ['friendly soldier','NORMAL','scopeGuard.isFriendly=true;'],
+  ['neutral wanderer','BANDIT','scopeGuard.isNeutral=true;'],
+  ['unarmed civilian','NORMAL','scopeGuard.isUnarmed=true;scopeGuard.isCoward=true;'],
+  ...['ROBOT','BUG','SNAIL','SNAIL_HYBRID','ALIEN_GATOR','AERIAL','AERIAL_PISTOL','SAUCER','SAUCER_RED','ARMORED'].map(t=>[t,t,'']),
+  ['scripted ambusher','NORMAL','scopeGuard.isAmbush=true;scopeGuard.state="CHASE";'],
+  ['active muster','NORMAL','nm0AmbushActive=true;scopeGuard.state="CHASE";'],
+  ['active farm battle','NORMAL','farmAmbushActive=true;scopeGuard.state="CHASE";'],
+  ['nonplayer aggro','NORMAL','scopeGuard.aggroTarget=new Character(120,20,false);scopeGuard.aggroTimer=500;scopeGuard.state="CHASE";'],
+  ['nonplayer leader','NORMAL','scopeGuard.leader=new Character(120,20,false);scopeGuard.state="CHASE";'],
+  ['paused','NORMAL','isPaused=true;'],
+  ['scripted town scene','NORMAL','inTownCutscene=true;']
+ ];
+ for(const [label,type,extra]of fixtures){
+  const level=3;
   const init=`currentLevel=currentBiome=${level};BIOME_ACTIVE=true;isStoryMode=false;started=doTick=true;
    isPaused=isDead=isWin=killcamMode=inTownCutscene=inFarmCutscene=inFarmPostCutscene=inFortCutscene=inPostAmbushCutscene=inTravelMenu=inStoryIntro=inDarchonCall=false;
+   nm0AmbushActive=farmAmbushActive=false;inStoryRoom=inLvl4Cutscene=inWorldBuildingMenu=inUpgradeMenu=inOverworldView=false;
    authoredCore=authoredMask=null;buildings=[];activeBuildings=[];activeParkingCars=[];enemiesList=[];barrels=[];
-   frontierBounties={activeId:${JSON.stringify(bounty)},contracts:{}};
-   ${bounty?`frontierBountyRecord(FRONTIER_BOUNTY_DEFS.find(d=>d.id===${JSON.stringify(bounty)})).stage=${JSON.stringify(stage)};`:''}
-   player=new Character(0,0,true);player.hp=9999;window.scopeGuard=new Character(240,50,false,'BANDIT');
-   scopeGuard.aimAngle=Math.PI;scopeGuard.fireTimer=999999;
-   ${bounty?`scopeGuard.frontierBountyId=${JSON.stringify(bounty)};`:''}
+   frontierBounties={activeId:null,contracts:{}};
+   player=new Character(0,0,true);player.hp=9999;window.scopeGuard=new Character(240,50,false,${JSON.stringify(type)});
+   scopeGuard.aimAngle=Math.PI;scopeGuard.fireTimer=999999;scopeGuard.aiOffset=0;
+   ${extra}
    enemiesList=[scopeGuard];invalidateColIndex();`;
   before.probe(init);after.probe(init);
   for(let f=0;f<30;f++){
    const step=`frameCount=${f+10};deltaTime=1000/60;scopeGuard.updateEnemy();
     JSON.stringify([scopeGuard.x,scopeGuard.y,scopeGuard.state,scopeGuard.aimAngle,
     scopeGuard.moveAngle,scopeGuard.loseSightTimer,scopeGuard.cachedCanSee,scopeGuard.lastKnownX,scopeGuard.lastKnownY,scopeGuard.ammo]);`;
-   assert.equal(after.probe(step),before.probe(step),`L${level} ${bounty||'ordinary'} ${stage||''} frame ${f}`);
-   assert.deepEqual(after.rng(),before.rng(),'Unscoped AI consumes the same random sequence');checks+=2;
+   assert.equal(after.probe(step),before.probe(step),`${label} frame ${f}`);
+   assert.deepEqual(after.rng(),before.rng(),label+' consumes the same random sequence');checks+=2;
   }
-  assert.equal(after.probe('scopeGuard.redMesaStealth'),undefined,'Unscoped actors never acquire stealth state');checks++;
+  assert.equal(after.probe('scopeGuard.stealthPerception'),undefined,label+' never acquires shared stealth state');checks++;
  }
- console.log(`Red Mesa scope: ${checks} native enemy-decision and RNG parity checks passed.`);
+ console.log(`Protected AI scope: ${checks} native enemy-decision and RNG parity checks passed.`);
 }finally{fs.rmSync(folder,{recursive:true,force:true});}

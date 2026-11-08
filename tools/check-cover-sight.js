@@ -53,11 +53,12 @@ ok('a covered humanoid sees out from its canonical head',P('shovelActorLOS(sight
 probe('sightCovered.cover.upper.x=sightCovered.cover.upper.y=0;sightCovered.cover.peek=0;sightCovered.cover.validPeek=false;sightCovered.cover.aiming=false;');
 ok('a closed wall posture cannot see through its own wall',!P('shovelActorLOS(sightCovered,sightOpen)'));
 
-// Prove the real enemy sight cache receives the posed result before any shot.
-fresh();probe('enemiesList=[sightGunner];frameCount=130;sightGunner.updateEnemy();');
-ok('the native enemy cache detects a peeking player',P('sightGunner.cachedCanSee&&sightGunner.state===\'CHASE\''));
-settle(false);probe('frameCount=160;sightGunner.updateEnemy();');
-ok('the next normal sight slice loses a retracted player',!P('sightGunner.cachedCanSee'));
+// Prove an already alerted enemy's combat cache receives the posed result.
+// Fresh patrol recognition is now gradual and covered by the stealth suite.
+fresh();probe('enemiesList=[sightGunner];sightGunner.state="CHASE";frameCount=130;sightGunner.updateEnemy();');
+ok('the alerted enemy cache detects a peeking player',P('sightGunner.cachedCanSee&&sightGunner.state===\'CHASE\''));
+settle(false);probe('frameCount=160;deltaTime=100;sightGunner.updateEnemy();');
+ok('the next perception slice loses a retracted player',!P('sightGunner.cachedCanSee'));
 
 fresh();probe(`window.sightFoe=player;sightFoe.isPlayer=false;sightFoe.eType='NORMAL';
  player=new Character(-500,-500,true);sightGunner.isFriendly=true;sightGunner.baseState='FOLLOW';

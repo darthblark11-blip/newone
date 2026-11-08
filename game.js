@@ -29750,6 +29750,9 @@ function updateEntities() {
   if (comboTimer > 0) { comboTimer--; if (comboTimer <= 0) consecutiveKills = 0; }
 
   if (doTick) {
+      // Sound ages and running displacement advances even with no listeners.
+      // Individual guards reuse this frame-stamped queue rather than owning it.
+      stealthUpdateNoise(deltaTime);
       const bloodMs = bloodGameplayActive() ? bloodElapsedMs() : 0;
       if (player && player.arrowBloodTrail) updateArrowBloodTrail(player,bloodMs);
       updateWorldBoxingOpponents();
@@ -59800,13 +59803,16 @@ function drawClimateReadout() {
   // Before noon a horizon sun is coming up, after it is going down.
   if (phase === "DUSK" && worldHour() < 12) phase = "DAWN";
 
-  // Leave the top-right pause tap area clear of the climate readout.
+  // On narrow phones the old pause margin pushed climate text across the
+  // health bars. Keep it in the remaining right lane; wider views retain
+  // their existing placement beside the top-right pause tap area.
+  const climateX=width<380?width-12:width-70;
   push();
   textAlign(RIGHT, TOP); hudTextFont(); noStroke();
   fill(pc[0], pc[1], pc[2]); textSize(12);
-  text(worldClockLabel() + " " + phase, width - 70, 42);
+  text(worldClockLabel() + " " + phase, climateX, 42);
   fill(230); textSize(12);
-  text(Math.round(worldTemperatureF()) + "°F" + (isRaining ? "  RAIN" : ""), width - 70, 56);
+  text(Math.round(worldTemperatureF()) + "°F" + (isRaining ? "  RAIN" : ""), climateX, 56);
 
   // WHAT THE LIGHT RIG IS ACTUALLY DOING. Off by default; set window.SHOW_RIG
   // from the console to turn it on. It exists because "it feels slow" and "it
@@ -60816,7 +60822,7 @@ function stealthSurfaceAt(x,y){
     if(solid.propType==='BOARDWALK'||solid.propType==='BRIDGE')return 'TIMBER';
     if(solid.isGrassLot||solid.isCropField)return 'EARTH';
   }
-  return currentLevel===1||currentLevel===2||currentLevel===8?'STONE':'EARTH';
+  return currentLevel===1||currentLevel===8||currentLevel===2&&inAuthoredSector(x,y,0)?'STONE':'EARTH';
 }
 function stealthRunningRadius(a=player){
   if(!stealthPerceptionContext()||!a||!a.isMoving||actorStance(a)!=='STAND'||
@@ -60920,7 +60926,7 @@ function stealthIllumination(target=player){
 }
 function stealthPerceptionState(e){
   if(!e.stealthPerception)e.stealthPerception=e.redMesaStealth||{phase:e.state==='CHASE'?'ALERT':'PATROL',suspicion:e.state==='CHASE'?1:0,visible:false,handled:true,
-    sampleMs:e.frontierBountyId==='RED_MESA'?STEALTH_PERCEPTION.senseMs:Math.max(0,Math.min(9,e.aiOffset||0))*STEALTH_PERCEPTION.senseMs/10,
+    sampleMs:e.state==='CHASE'||e.frontierBountyId==='RED_MESA'?STEALTH_PERCEPTION.senseMs:Math.max(0,Math.min(9,e.aiOffset||0))*STEALTH_PERCEPTION.senseMs/10,
     recognitionMs:0,lostMs:0,phaseMs:0,heardId:0,goalX:Number.isFinite(e.lastKnownX)?e.lastKnownX:e.x,
     goalY:Number.isFinite(e.lastKnownY)?e.lastKnownY:e.y,homeX:e.x,homeY:e.y,patrolIndex:0,waitMs:600,health:e.hp};
   // The alias keeps the existing Red Mesa saved survivor format compatible.
@@ -60971,6 +60977,9 @@ function stealthUpdateEnemy(e,spd=1){
   stealthUpdateNoise(dt);const n=_redMesaNoise;s.phaseMs+=dt;s.sampleMs+=dt;s.handled=true;
   const target=e.aggroTarget&&e.aggroTarget.hp>0&&!e.aggroTarget.dead?e.aggroTarget:player;
   s.target=target;
+  const layerNow=shovelActorsVisible(e,target);
+  if(s.layerVisible===false&&layerNow)s.sampleMs=STEALTH_PERCEPTION.senseMs;
+  s.layerVisible=layerNow;
   const hurt=e.hp<s.health;s.health=e.hp;
   // External CHASE orders (damage, triggered encounters, turned towns) are
   // explicit alerts and must not be undone by a previously curious guard.
@@ -61010,7 +61019,8 @@ function stealthUpdateEnemy(e,spd=1){
   if(s.phase==='ALERT'){
     if(!s.visible)s.lostMs+=dt;
     if(s.lostMs>=STEALTH_PERCEPTION.loseMs){stealthEnterPhase(e,'SEARCH');s.suspicion=.65;s.recognitionMs=0;}
-    else{s.handled=false;s.distance=s.visible?Math.hypot(target.x-e.x,target.y-e.y):Math.hypot(s.goalX-e.x,s.goalY-e.y);
+    else{e.loseSightTimer=Math.max(1,(STEALTH_PERCEPTION.loseMs-s.lostMs)/16.67);
+      s.handled=false;s.distance=s.visible?Math.hypot(target.x-e.x,target.y-e.y):Math.hypot(s.goalX-e.x,s.goalY-e.y);
       s.angle=Math.atan2((s.visible?target.y:s.goalY)-e.y,(s.visible?target.x:s.goalX)-e.x);return s;}
   }
   if(s.phase==='CURIOUS'){

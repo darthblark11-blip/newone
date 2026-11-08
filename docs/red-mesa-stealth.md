@@ -1,6 +1,6 @@
 # Red Mesa stealth sandbox
 
-The new perception system runs only for Red Mesa bounty actors while that contract is active in Level 3. Ordinary enemies, other levels, the Dust Rail contract and the Coyote Mine contract retain their existing AI. Confirmed Red Mesa alerts hand control back to the existing chase and combat code.
+Red Mesa was the original Level 3 test encounter for this system. The accepted implementation has now been promoted to regular hostile humans; see [shared stealth and compact mission HUD](stealth-perception.md) for the current scope and interface. This page retains the encounter layout, tuning and original validation record. Confirmed alerts hand control back to the existing chase and combat code.
 
 ## Playing the encounter
 
@@ -48,7 +48,7 @@ RED_MESA_P5=/path/to/p5-1.9.0.min.js node tools/check-red-mesa-stealth-browser.c
 
 The browser check requires `playwright-core` and Chromium (`VIS_CHROME` can select its executable). It uses the production p5 1.9.0 library, executes native character/cover logic and complete day/night drawing, and writes its report and captures to `/tmp/red-mesa-stealth-qa` (`RED_MESA_QA_OUT` overrides this).
 
-The encounter suite passed 14 checks, including native collision routing from every entrance, patrol segments, support casualties and save continuity. The scope suite passed 427 enemy-decision and RNG parity checks against commit `370d076` outside the sandbox. Existing bounty and integration suites passed 37 and 42 checks. Browser assertions passed for silence, material propagation, cone facing, gradual recognition, historical sound locations, low-cover concealment, native pop-up/corner peeking, day/night/shadows and last-known-position searches.
+The original encounter suite passed 14 checks, including native collision routing from every entrance, patrol segments, support casualties and save continuity. Its initial scope suite passed 427 enemy-decision and RNG parity checks against commit `370d076` outside the sandbox. That scope check now protects dedicated AI and scripted combat while allowing the approved regular-enemy rollout. Existing bounty and integration suites passed 37 and 42 checks. Browser assertions passed for silence, material propagation, cone facing, gradual recognition, historical sound locations, low-cover concealment, native pop-up/corner peeking, day/night/shadows and last-known-position searches.
 
 Full native day/night renders completed with no uncaught JavaScript errors, WebGL errors or Canvas2D/WebGL attribute warnings; p5 drawing stacks remained balanced. Software-rendered Chromium CPU samples are recorded for reference and do not establish physical-device frame rates.
 
