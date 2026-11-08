@@ -35,6 +35,8 @@ P(`currentLevel=1;stealthPerceptionReset();activeBuildings=[];invalidateColIndex
  activeBuildings=[{x:0,y:0,w:200,h:200,isDeck:true,propType:'BOARDWALK'}];invalidateColIndex();var wood=stealthSurfaceAt(0,0);`);
 ok(`stone==='STONE'&&grass==='EARTH'&&wood==='TIMBER'`,
  'City paving, grass and authored boardwalks expose different real acoustic materials');
+P(`currentLevel=2;activeBuildings=[];authoredCore=null;invalidateColIndex();var woodland=stealthSurfaceAt(15000,6600);currentLevel=1;`);
+ok(`woodland==='EARTH'`, 'Unpaved Level 2 woodland uses soft earth instead of city paving');
 P(`activeBuildings=[{x:144,y:48,w:40,h:160,isGiantBarrier:true}];buildings=activeBuildings;invalidateColIndex();
  shovelExcavation={};guard=new Character(48,48,false,'NORMAL');guard.aimAngle=0;enemiesList=[guard];
  player.x=240;player.y=48;
