@@ -65,7 +65,7 @@ async function checkBehavior(page){
   };
   const tick=(e,dt=50)=>{deltaTime=dt;doTick=true;frameCount++;stealthUpdateNoise(dt);e.updateEnemy();return stealthPerceptionState(e);};
   for(const level of [1,3]){
-   let guard=prepare(level),row={level,noContract:frontierBounties.activeId===null,eligible:stealthPerceptionActor(guard)};
+   let guard=prepare(level,500),row={level,noContract:frontierBounties.activeId===null,eligible:stealthPerceptionActor(guard)};
    guard.aimAngle=Math.PI;row.awayCone=sight(guard);guard.aimAngle=0;row.frontCone=sight(guard);
    row.curiosity=[];
    for(let i=0;i<120;i++){
@@ -75,7 +75,7 @@ async function checkBehavior(page){
     if(s.phase==='ALERT')break;
    }
    const s=stealthPerceptionState(guard),lastSeen={x:s.goalX,y:s.goalY};
-   const wall={x:5510,y:-3600,w:38,h:600,coverType:'HIGH',hp:Infinity,maxHp:Infinity};
+   const wall={x:5510,y:-3600,w:38,h:6000,coverType:'HIGH',hp:Infinity,maxHp:Infinity};
    activeBuildings=[wall];buildings=[wall];invalidateColIndex();player.x=5750;player.y=-3440;
    row.lostSight={lastSeen,hiddenPlayer:{x:player.x,y:player.y},phases:[]};
    for(let i=0;i<230;i++){
@@ -103,9 +103,45 @@ async function checkBehavior(page){
   }
   guard=prepare(1);guard.aimAngle=Math.PI;player.isMoving=true;player.gait=1;leftStick.dx=1;
   for(let i=0;i<12;i++){
-   guard.aimAngle=Math.PI;player.x+=6;const s=tick(guard);
+   guard.aimAngle=Math.PI;player.x+=6;const origin={x:guard.x,y:guard.y},s=tick(guard);
    if(s.heardId>0){const event=_redMesaNoise.events.find(e=>e.id===s.heardId);
-    results.hearing={phase:s.phase,visible:s.visible,suspicion:s.suspicion,goalX:s.goalX,goalY:s.goalY,event};break;}
+    results.hearing={phase:s.phase,visible:s.visible,suspicion:s.suspicion,goalX:s.goalX,goalY:s.goalY,angle:guard.aimAngle,origin,event};break;}
+  }
+  results.instantBoundary=[];
+  for(const distance of [399.99,400,400.01]){
+   guard=prepare(1,distance);stealthPerceptionState(guard).sampleMs=0;
+   const s=tick(guard,1000/60);
+   results.instantBoundary.push({distance,phase:s.phase,sampleMs:s.sampleMs,nativeState:guard.state});
+  }
+  guard=prepare(1,300);guard.aimAngle=Math.PI;stealthPerceptionState(guard).sampleMs=0;
+  results.closeBehind=tick(guard,1000/60).phase;
+  guard=prepare(1,300);resetActorStance(player,'CROUCH');
+  activeBuildings=buildings=[{x:5510,y:-3600,w:38,h:180,coverType:'LOW',hp:Infinity,maxHp:Infinity}];invalidateColIndex();
+  stealthPerceptionState(guard).sampleMs=0;results.closeConcealed=tick(guard,1000/60).phase;
+  guard=prepare(1,400);stealthPerceptionState(guard).sampleMs=0;
+  const far=new Character(9000,-3600,false,'NORMAL');far.isArmed=true;far.currentWeapon=WEAPONS.PISTOL;
+  far.aimAngle=0;far.fireTimer=99999;far.postX=far.x;far.postY=far.y;far.postR=0;enemiesList.push(far);
+  tick(guard,1000/60);
+  results.groupAlarm={distance:Math.hypot(far.x-guard.x,far.y-guard.y),phase:stealthPerceptionState(far).phase,nativeState:far.state,
+   observed:{x:stealthPerceptionState(far).goalX,y:stealthPerceptionState(far).goalY}};
+  player.x=-10000;player.y=-10000;tick(guard);tick(far);
+  results.groupAlarm.hidden={player:{x:player.x,y:player.y},visible:stealthPerceptionState(far).visible,
+   memory:{x:stealthPerceptionState(far).goalX,y:stealthPerceptionState(far).goalY}};
+  guard=prepare(1,2000);guard.aimAngle=Math.PI;stealthPerceptionState(guard).sampleMs=0;
+  stealthEmitNoise(5550,-3520,280);const source={..._redMesaNoise.events.at(-1)},heard=tick(guard,1000/60);
+  results.historicalHearing={source,player:{x:player.x,y:player.y},angle:guard.aimAngle,
+   phase:heard.phase,visible:heard.visible,goalX:heard.goalX,goalY:heard.goalY,sharedAngle:guard._entityFacing.angle};
+  results.fastMovement=[];
+  for(const phase of ['INVESTIGATE','SEARCH']){
+   guard=prepare(1,2000);guard.aimAngle=Math.PI;stealthEnterPhase(guard,phase);
+   const s=stealthPerceptionState(guard);s.goalX=7400;s.goalY=-3600;
+   const x=guard.x,y=guard.y,turns=[];let previous=guard.aimAngle;
+   for(let i=0;i<60;i++){
+    tick(guard,1000/60);turns.push(Math.abs(Math.atan2(Math.sin(guard.aimAngle-previous),Math.cos(guard.aimAngle-previous))));previous=guard.aimAngle;
+   }
+   const after=guard.aimAngle;finishEntityFacing(guard,1000/60);
+   results.fastMovement.push({phase,distance:Math.hypot(guard.x-x,guard.y-y),firstTurn:turns[0],maxTurn:Math.max(...turns),
+    finalAngle:after,repeatAngle:guard.aimAngle,sharedAngle:guard._entityFacing.angle});
   }
   guard=prepare(3);player.isMoving=true;player.gait=1;leftStick.dx=1;results.materialRadii={};
   for(const kind of ['EARTH','TIMBER','STONE']){
@@ -149,9 +185,28 @@ async function checkBehavior(page){
   assert.ok(row.lowDuckHidden&&row.lowPopExposed,'Native low-cover pop exposes a previously ducked player');
  }
  assert.ok(result.silent.every(r=>r.radius===0),'Walk/jog/crouch/prone and eased run release are silent');
- assert.ok(result.hearing&&!result.hearing.visible&&result.hearing.phase==='CURIOUS','Ordinary guard hears running behind it without instant alert');
+ assert.ok(result.hearing&&result.hearing.visible&&result.hearing.phase==='ALERT','Hearing immediately faces and recognizes an exposed player within 20 m');
+ assert.ok(Math.abs(result.hearing.angle-Math.atan2(result.hearing.event.y-result.hearing.origin.y,result.hearing.event.x-result.hearing.origin.x))<1e-8,'The native shoulder filter preserves the immediate sound turn');
  assert.equal(result.hearing.goalX,result.hearing.event.x,'Sound goal preserves emission position');
  assert.equal(result.hearing.goalY,result.hearing.event.y);
+ assert.deepEqual(result.instantBoundary.map(r=>r.phase),['ALERT','ALERT','PATROL'],'The inclusive 20 m boundary recognizes before the normal sense slice');
+ assert.ok(result.instantBoundary.every(r=>r.sampleMs<100),'Boundary fixtures have no scheduled long-range sample');
+ assert.equal(result.closeBehind,'PATROL','Close recognition still requires the forward cone');
+ assert.equal(result.closeConcealed,'PATROL','Close recognition preserves low-cover concealment');
+ assert.ok(result.groupAlarm.distance>600&&result.groupAlarm.phase==='ALERT'&&result.groupAlarm.nativeState==='CHASE','A distant ordinary guard enters native combat on confirmed spotting');
+ assert.deepEqual(result.groupAlarm.observed,{x:5800,y:-3600},'The group receives the observed player position');
+ assert.deepEqual(result.groupAlarm.hidden.memory,result.groupAlarm.observed,'An unseen player move cannot update a remote guard\'s shared memory');
+ assert.equal(result.groupAlarm.hidden.visible,false,'A combat report does not grant remote visibility');
+ const historical=result.historicalHearing,expectedAngle=Math.atan2(historical.source.y+3600,historical.source.x-5400);
+ assert.ok(historical.phase==='CURIOUS'&&!historical.visible,'A historical sound alone cannot reveal a distant hidden player');
+ assert.deepEqual({x:historical.goalX,y:historical.goalY},{x:historical.source.x,y:historical.source.y},'Hearing uses the recorded sound position');
+ assert.ok(Math.abs(historical.angle-expectedAngle)<1e-8&&historical.angle===historical.sharedAngle,'Immediate historical sound orientation survives the native finally filter');
+ for(const row of result.fastMovement){
+  assert.ok(row.distance>(row.phase==='INVESTIGATE'?210:185),`${row.phase} runs urgently over one native second`);
+  assert.ok(row.firstTurn>0&&row.firstTurn<18/60&&row.maxTurn>9/60&&row.maxTurn<=18/60+1e-8,'Urgent turns connect through intermediate frames with the faster 18 rad/s limit');
+  assert.equal(row.repeatAngle,row.finalAngle,'The native finally filter consumes an urgent turn only once');
+  assert.equal(row.sharedAngle,row.finalAngle,'The shared shoulder state matches the rendered urgent heading');
+ }
  assert.ok(result.materialRadii.TIMBER>result.materialRadii.STONE&&result.materialRadii.STONE>result.materialRadii.EARTH,'Authored materials still scale noise outside active bounty');
  assert.ok(result.highCoverHidden&&result.highCoverPeek.valid&&result.highCoverPeek.exposed&&result.highCoverPeek.rootStillBlocked,'Native high-cover lean exposes the upper body while its root remains blocked');
  assert.ok(result.nightIllumination<result.dayIllumination&&result.shadowIllumination<result.sunlitIllumination,'Ordinary enemy illumination reflects night and building shadows');
@@ -209,7 +264,8 @@ async function captureScenes(page){
    if(stage==='progress')assert.equal(state.toastTicks,0,'Individual kills do not create another notification');
   }
  }
- // Actual city exploration remains live while its ordinary guard notices the player.
+ // Actual city exploration remains live as exposed close guards confirm the
+ // player and share combat state through the native city population.
  await page.evaluate(()=>{
   startAtLevel(1);started=true;isDead=isWin=isPaused=false;
   inStoryIntro=inStoryRoom=killcamMode=inTownCutscene=inFarmCutscene=inFarmPostCutscene=inPostAmbushCutscene=inFortCutscene=inDarchonCall=inTravelMenu=false;
@@ -227,12 +283,14 @@ async function captureScenes(page){
   for(let i=0;i<12;i++){deltaTime=1000/60;frameCount++;draw();}
   return {width,height,level:currentLevel,exploration:inOverworldView,guardEligible:stealthPerceptionActor(__ordinaryStealthFixture),
    phase:stealthPerceptionState(__ordinaryStealthFixture).phase,suspicion:stealthPerceptionState(__ordinaryStealthFixture).suspicion,
+   alertedGuards:enemiesList.filter(e=>stealthPerceptionActor(e)&&e.state==='CHASE').length,
    hud:{..._activityStealthHud},layout:activityHudLayout(),stackBefore:stack,stackAfter:p?._styles?.length||0,
    gl:{ok:GLRig.ok,on:GLRig.on,error:GLRig.gl?.getError(),failure:GLRig.failure},fault:window.FRAME_FAULT||null};
  });
  city.screenshot='ordinary-enemy-stealth-city.png';await page.screenshot({path:path.join(out,city.screenshot)});scenes.push(city);
  assertNative(city);assert.ok(city.exploration&&city.guardEligible,'Native overworld exploration uses ordinary stealth');
- assert.ok(city.suspicion>0&&city.suspicion<1&&city.hud.visible>0,'City guard shows gradual recognition in the compact HUD');
+ assert.ok(city.phase==='ALERT'&&city.suspicion===1&&city.hud.visible>0,'The live city shares confirmed close sightings and shows SPOTTED in the compact HUD');
+ assert.ok(city.alertedGuards>=2,'At least two eligible native city guards share the confirmed combat state');
  return scenes;
 }
 function assertNative(state){

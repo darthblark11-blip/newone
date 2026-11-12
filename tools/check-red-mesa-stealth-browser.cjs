@@ -95,9 +95,9 @@ async function main(){
    for(let i=0;i<12;i++){
     player.x+=6;const state=tick(guard);
     if(state.heardId>0){const event=_redMesaNoise.events.find(e=>e.id===state.heardId);
-     results.hearing={phase:state.phase,visible:state.visible,suspicion:state.suspicion,goalX:state.goalX,goalY:state.goalY,event};break;}
+     results.hearing={phase:state.phase,visible:state.visible,suspicion:state.suspicion,goalX:state.goalX,goalY:state.goalY,angle:guard.aimAngle,event};break;}
    }
-   guard=prepare(220);results.curiosity=[];
+   guard=prepare(500);results.curiosity=[];
    for(let i=0;i<100;i++){
     guard.x=def.x;guard.y=def.y;guard.aimAngle=0;
     const state=tick(guard);
@@ -105,7 +105,7 @@ async function main(){
     if(state.phase==='ALERT')break;
    }
    const lastSeen={x:guard.redMesaStealth.goalX,y:guard.redMesaStealth.goalY};
-   const screen={x:def.x+110,y:def.y,w:38,h:600,coverType:'HIGH',hp:Infinity,maxHp:Infinity};
+   const screen={x:def.x+110,y:def.y,w:38,h:6000,coverType:'HIGH',hp:Infinity,maxHp:Infinity};
    activeBuildings=[screen];buildings=[screen];invalidateColIndex();player.x=def.x+350;player.y=def.y+160;
    const loss=[];
    for(let i=0;i<220;i++){
@@ -151,10 +151,11 @@ async function main(){
   assert.ok(behavior.runningRadius>0,'Running propagates footstep noise');
   assert.ok(behavior.runningNoise.length>0,'Actual running displacement emits bounded historical sound events');
   assert.ok(behavior.materialRadii.TIMBER>behavior.materialRadii.STONE&&behavior.materialRadii.STONE>behavior.materialRadii.EARTH,'Footstep propagation follows the authored surface material');
-  assert.ok(behavior.hearing&&!behavior.hearing.visible&&behavior.hearing.phase==='CURIOUS'&&behavior.hearing.suspicion<1,'A nearby guard hears running behind it and becomes curious before visual alert');
+  assert.ok(behavior.hearing&&behavior.hearing.visible&&behavior.hearing.phase==='ALERT','A nearby guard immediately faces the sound and spots an exposed runner inside 20 m');
+  assert.ok(Math.abs(behavior.hearing.angle)<1e-8,'Native facing keeps the immediate sound orientation');
   assert.equal(behavior.hearing.goalX,behavior.hearing.event.x,'Hearing investigates the historical sound location');
   assert.equal(behavior.hearing.goalY,behavior.hearing.event.y);
-  assert.ok(behavior.curiosity[0].phase!=='ALERT','First sight has a grace period');
+  assert.ok(behavior.curiosity[0].phase!=='ALERT','Sight beyond 20 m keeps its recognition grace period');
   assert.ok(behavior.curiosity.some(s=>s.phase==='CURIOUS'),'Vision enters the curious phase');
   assert.equal(behavior.curiosity.at(-1).phase,'ALERT','Sustained clear sight reaches full alert');
   const search=behavior.lostSight.phases.find(s=>s.phase==='SEARCH');

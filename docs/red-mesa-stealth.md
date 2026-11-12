@@ -8,9 +8,9 @@ Accept **Red Mesa Raiders** from the Level 3 bounty board. The redoubt has four 
 
 Walk, jog, crouch and prone movement are silent. Running emits footsteps after actual movement; earth carries them the least, then stone, then timber. Guards investigate where a sound occurred. Walls reduce sound propagation. Gunfire is also audible; the bow is silent.
 
-Guards see through a forward cone and build suspicion before attacking. Distance, stance, running, daylight, ambient light, local lights and building shadows affect recognition. The HUD reports suspicion and the investigation/search phase. Crouching or going prone behind a low obstacle completely blocks visual detection across that obstacle. Standing, popping up to shoot or leaning around a high corner can expose the player.
+Guards see through a forward cone. An exposed player within 20 m is spotted immediately; beyond that, guards build suspicion before attacking. Distance, stance, running, daylight, ambient light, local lights and building shadows affect long-range recognition. The HUD reports suspicion and the investigation/search phase. Crouching or going prone behind a low obstacle completely blocks visual detection across that obstacle. Standing, popping up to shoot or leaning around a high corner can expose the player.
 
-After losing sight, guards search the last known position and eventually return to patrol. Nearby guards receive the reported position and investigate; they do not receive the hidden player's current position. Leaving and returning preserves casualties, wounded survivors and investigation state.
+Confirmed detection alerts all eligible hostile guards on the same vertical layer, including distant guards, directly into combat. They share only the last confirmed position and keep their own line-of-sight checks. Once everyone loses sight, guards run to search that position and eventually return to patrol. Hearing immediately turns a guard toward the recorded sound source without automatically alerting the group. Leaving and returning preserves casualties, wounded survivors and investigation state.
 
 ## Integration and tuning
 
@@ -29,7 +29,7 @@ All configuration and functions are in `game.js` beside `FRONTIER_BOUNTY_DEFS`:
 | `RED_MESA_SURFACES` | Authored material rectangles shared by rendering and acoustics |
 | `serializeRedMesaStealthActor` / `restoreRedMesaStealthActor` | Bounded, validated save state |
 
-Defaults: sight range 680 world units; total cone angle 104.4°; sight/hearing sampling every 100 ms; base recognition grace 450 ms, increased by darkness and distance; curious pause 400 ms; lost-sight window 2,200 ms; search window 6,500 ms. Running hearing radii are earth 280, stone 313.6 and timber 378 units. Footsteps require 46 units of running displacement. Sound events expire after 900 ms, with at most 12 retained. The player lighting estimate is shared between guards and cached for six frames. No GPU pixel reads are used.
+Defaults: sight range 680 world units; instant recognition within 400 units (20 m); total cone angle 104.4°; long-range sight sampling every 100 ms, with immediate close detection and hearing reactions; long-range base recognition grace 450 ms, increased by darkness and distance; curious pause 400 ms; lost-sight window 2,200 ms; search window 6,500 ms. Investigation/search travel is 3.6/3.2 units per nominal 60 Hz frame; urgent turns use an 18 rad/s limit and 35 ms response. Running hearing radii are earth 280, stone 313.6 and timber 378 units. Footsteps require 46 units of running displacement. Sound events expire after 900 ms, with at most 12 retained. The player lighting estimate is shared between guards and cached for six frames. No GPU pixel reads are used.
 
 The locomotion noise gate reads the current movement input, so easing down from a run to a jog is silent immediately. Collision-blocked movement and teleporting do not emit running steps. Guards use the existing collision and avoidance helpers for movement. Supporting casualties are stored independently and do not grant bounty progress or campaign kill score.
 

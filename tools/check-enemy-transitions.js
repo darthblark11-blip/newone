@@ -8,7 +8,9 @@ const ok=(label,value)=>{assert.ok(value,label);checks++;};
 ctx.setTimeout=()=>0;
 ctx.random=(a,b)=>a===undefined?.1:Array.isArray(a)?a[0]:b===undefined?a*.1:a+(b-a)*.1;
 function fresh(type='NORMAL',angle=Math.PI,distance=180){
-  probe(`resetRunState();currentLevel=currentBiome=8;BIOME_ACTIVE=false;started=doTick=true;
+  // Exercise native combat outside the shared Levels 1–8 recognition gate.
+  // Human stealth turning/last-seen handoff has its own balance integration suite.
+  probe(`resetRunState();currentLevel=currentBiome=9;BIOME_ACTIVE=false;started=doTick=true;
     isStoryMode=isPaused=isDead=isWin=killcamMode=nm0AmbushActive=farmAmbushActive=false;
     inStoryIntro=inStoryRoom=inTownCutscene=inFortCutscene=inPostAmbushCutscene=false;
     inFarmCutscene=inFarmPostCutscene=inLvl4Cutscene=inDarchonCall=inCutscene=false;

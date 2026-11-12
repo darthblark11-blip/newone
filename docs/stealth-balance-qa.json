@@ -1,0 +1,249 @@
+{
+  "validatedAt": "2026-11-12T04:01:28.680Z",
+  "baselineCommit": "8d18724",
+  "sourceSha256": "9c974c79c6d1b147393795ee97d10aaf5c80c7e4d4777e5b681320bd932fe46b",
+  "p5Version": "1.9.0",
+  "p5Sha256": "726ac96626b93f5bcaff83a910b6c60d3a9728f063e0eb73b5d0819ffc356915",
+  "renderer": "Chromium SwiftShader; physical-device performance unmeasured",
+  "integrationChecks": {
+    "check-stealth-balance.js": 50,
+    "check-stealth-perception.js": 12,
+    "check-red-mesa-scope.js": 1220,
+    "check-red-mesa-encounter.js": 14,
+    "check-enemy-transitions.js": 64,
+    "check-cover-sight.js": 31,
+    "check-enemy-shot-reactions.js": 92,
+    "check-stance-ai.js": 30,
+    "check-gate-ambush-isolation.js": 179,
+    "check-frontier-bounties.js": 37,
+    "check-frontier-integration.js": 42,
+    "check-bounty-hud.js": 61,
+    "check-stance-performance.js": 1267,
+    "check-stance-layering.js": 111
+  },
+  "nativeBehavior": {
+    "instantBoundary": [
+      {
+        "distance": 399.99,
+        "phase": "ALERT",
+        "sampleMs": 16.666666666666668,
+        "nativeState": "CHASE"
+      },
+      {
+        "distance": 400,
+        "phase": "ALERT",
+        "sampleMs": 16.666666666666668,
+        "nativeState": "CHASE"
+      },
+      {
+        "distance": 400.01,
+        "phase": "PATROL",
+        "sampleMs": 16.666666666666668,
+        "nativeState": "PATROL"
+      }
+    ],
+    "closeBehind": "PATROL",
+    "closeConcealed": "PATROL",
+    "hearing": {
+      "phase": "ALERT",
+      "visible": true,
+      "suspicion": 1,
+      "goalX": 5674,
+      "goalY": -3600,
+      "angle": 0.026512445832843394,
+      "origin": {
+        "x": 5395.2263298301405,
+        "y": -3607.392704045844
+      },
+      "event": {
+        "id": 1,
+        "x": 5674,
+        "y": -3600,
+        "radius": 313.6,
+        "kind": "RUN",
+        "at": 450
+      }
+    },
+    "historicalHearing": {
+      "source": {
+        "id": 1,
+        "x": 5550,
+        "y": -3520,
+        "radius": 280,
+        "kind": "RUN",
+        "at": 0
+      },
+      "player": {
+        "x": 7400,
+        "y": -3600
+      },
+      "angle": 0.4899573262537283,
+      "phase": "CURIOUS",
+      "visible": false,
+      "goalX": 5550,
+      "goalY": -3520,
+      "sharedAngle": 0.4899573262537283
+    },
+    "fastMovement": [
+      {
+        "phase": "INVESTIGATE",
+        "distance": 215.9568086382933,
+        "firstTurn": 0.06132144929773453,
+        "maxTurn": 0.2914853829701156,
+        "finalAngle": 0,
+        "repeatAngle": 0,
+        "sharedAngle": 0
+      },
+      {
+        "phase": "SEARCH",
+        "distance": 191.96160767847687,
+        "firstTurn": 0.06132144929773453,
+        "maxTurn": 0.2914853829701156,
+        "finalAngle": 0,
+        "repeatAngle": 0,
+        "sharedAngle": 0
+      }
+    ],
+    "groupAlarm": {
+      "distance": 3597.55,
+      "phase": "ALERT",
+      "nativeState": "CHASE",
+      "observed": {
+        "x": 5800,
+        "y": -3600
+      },
+      "hidden": {
+        "player": {
+          "x": -10000,
+          "y": -10000
+        },
+        "visible": false,
+        "memory": {
+          "x": 5800,
+          "y": -3600
+        }
+      }
+    }
+  },
+  "scenes": [
+    {
+      "scene": "bounty-progress-320x568.png",
+      "width": 320,
+      "height": 568,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "stackDelta": 0,
+      "fault": null
+    },
+    {
+      "scene": "bounty-ready-320x568.png",
+      "width": 320,
+      "height": 568,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "stackDelta": 0,
+      "fault": null
+    },
+    {
+      "scene": "bounty-progress-390x844.png",
+      "width": 390,
+      "height": 844,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "stackDelta": 0,
+      "fault": null
+    },
+    {
+      "scene": "bounty-ready-390x844.png",
+      "width": 390,
+      "height": 844,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "stackDelta": 0,
+      "fault": null
+    },
+    {
+      "scene": "bounty-progress-844x390.png",
+      "width": 844,
+      "height": 390,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "stackDelta": 0,
+      "fault": null
+    },
+    {
+      "scene": "bounty-ready-844x390.png",
+      "width": 844,
+      "height": 390,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "stackDelta": 0,
+      "fault": null
+    },
+    {
+      "scene": "ordinary-enemy-stealth-city.png",
+      "width": 844,
+      "height": 390,
+      "phase": "ALERT",
+      "alertedGuards": 94,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "stackDelta": 0,
+      "fault": null
+    },
+    {
+      "scene": "red-mesa-day.png",
+      "hour": 13,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "stackDelta": 0,
+      "fault": null
+    },
+    {
+      "scene": "red-mesa-night.png",
+      "hour": 0,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "stackDelta": 0,
+      "fault": null
+    }
+  ],
+  "errors": [],
+  "rendererWarnings": []
+}

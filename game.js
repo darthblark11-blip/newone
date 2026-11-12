@@ -60781,11 +60781,12 @@ function placePlayerForReturnTravel(biome) {
 // desert roster. Each numbered gang member has a persistent casualty record;
 // chunk eviction, travel and loading cannot erase a kill or mint another reward.
 // Shared human perception, promoted from the validated Red Mesa sandbox.
-const STEALTH_PERCEPTION=Object.freeze({range:680,halfCone:Math.PI*.29,senseMs:100,
+const STEALTH_PERCEPTION=Object.freeze({range:680,instantRange:400,halfCone:Math.PI*.29,senseMs:100, // 20 m at 20 world units/metre.
   graceMs:450,curiousMs:400,loseMs:2200,searchMs:6500,noiseTtlMs:900,
-  stepDistance:46,noiseCap:12,earRadius:280,alarmRadius:600});
+  stepDistance:46,noiseCap:12,earRadius:280,
+  investigateSpeed:3.6,searchSpeed:3.2,turnRate:18,turnResponseMs:35});
 const RED_MESA_STEALTH=STEALTH_PERCEPTION; // Existing encounter tuning compatibility.
-let _redMesaNoise={frame:-1,clock:0,events:[],nextId:1,x:null,y:null,stride:0,framePlayer:null,lightFrame:-1,light:.5,level:currentLevel};
+let _redMesaNoise={frame:-1,clock:0,events:[],nextId:1,alarm:null,alarmId:0,x:null,y:null,stride:0,framePlayer:null,lightFrame:-1,light:.5,level:currentLevel};
 // Common human perception: ordinary patrols keep their native routes and
 // confirmed alerts reuse native combat. Scripted battles and special AI own
 // their original targeting rather than entering a second state machine.
@@ -60812,7 +60813,7 @@ function redMesaStealthContext(){
     frontierBountyRecord(FRONTIER_BOUNTY_DEFS[0]).stage==='ACTIVE'&&frontierBountyContext();
 }
 function redMesaStealthActor(e){return !!e&&e.frontierBountyId==='RED_MESA'&&redMesaStealthContext()&&stealthPerceptionActor(e);}
-function stealthPerceptionReset(){_redMesaNoise={frame:-1,clock:0,events:[],nextId:1,x:null,y:null,stride:0,framePlayer:null,lightFrame:-1,light:.5,level:currentLevel};}
+function stealthPerceptionReset(){_redMesaNoise={frame:-1,clock:0,events:[],nextId:1,alarm:null,alarmId:0,x:null,y:null,stride:0,framePlayer:null,lightFrame:-1,light:.5,level:currentLevel};}
 function stealthSurfaceAt(x,y){
   if(currentLevel===3)return redMesaSurfaceAt(x,y)||frontierSurfaceAt(x,y)||'EARTH';
   // Reuse the collision broad phase for authored boardwalk/deck materials.
@@ -60842,8 +60843,11 @@ function stealthEmitNoise(x,y,radius,kind='RUN'){
   if(n.events.length>STEALTH_PERCEPTION.noiseCap)n.events.shift();
 }
 function stealthUpdateNoise(dt=deltaTime){
-  if(!stealthPerceptionContext()||!doTick||_redMesaNoise.frame===frameCount)return;
+  if(!stealthPerceptionContext()||!doTick)return;
+  // Identity replacement may happen inside an already-ticked frame. Clear
+  // its sounds and team contact before applying same-world frame idempotence.
   if(_redMesaNoise.level!==currentLevel||_redMesaNoise.framePlayer&&_redMesaNoise.framePlayer!==player)stealthPerceptionReset();
+  if(_redMesaNoise.frame===frameCount)return;
   const n=_redMesaNoise;n.frame=frameCount;n.clock+=Math.min(100,Math.max(0,dt||1000/60));
   for(let i=n.events.length-1;i>=0;i--)if(n.clock-n.events[i].at>STEALTH_PERCEPTION.noiseTtlMs)n.events.splice(i,1);
   if(n.framePlayer!==player){n.framePlayer=player;n.x=player.x;n.y=player.y;n.stride=0;return;}
@@ -60951,24 +60955,58 @@ function restoreRedMesaStealthActor(e,saved){
   e.state=s.phase==='ALERT'?'CHASE':s.phase;
 }
 function stealthEnterPhase(e,phase){const s=stealthPerceptionState(e);if(s.phase!==phase){s.phase=phase;s.phaseMs=0;}e.state=phase==='ALERT'?'CHASE':phase;}
+function stealthAcceptAlarm(e,alarm){
+  const s=stealthPerceptionState(e);stealthEnterPhase(e,'ALERT');s.suspicion=1;
+  s.alarmId=alarm.id;s.lostMs=Math.max(0,_redMesaNoise.clock-alarm.at);
+  e.lastKnownX=s.goalX=alarm.x;e.lastKnownY=s.goalY=alarm.y;
+  e.loseSightTimer=Math.max(1,(STEALTH_PERCEPTION.loseMs-s.lostMs)/16.67);
+  // A report shares a confirmed position, never another guard's visibility.
+}
 function stealthAlert(e,x,y){
-  const s=stealthPerceptionState(e),fresh=s.phase!=='ALERT';stealthEnterPhase(e,'ALERT');s.suspicion=1;s.lostMs=0;
-  e.lastKnownX=s.goalX=x;e.lastKnownY=s.goalY=y;e.loseSightTimer=STEALTH_PERCEPTION.loseMs/16.67;
-  if(fresh)for(const other of enemiesList){
-    if(other===e||!stealthPerceptionActor(other)||other.dead||other.hp<=0||Math.hypot(other.x-e.x,other.y-e.y)>STEALTH_PERCEPTION.alarmRadius)continue;
-    const o=stealthPerceptionState(other);if(o.phase==='ALERT')continue;
-    o.goalX=x;o.goalY=y;o.suspicion=Math.max(o.suspicion,.3);o.waitMs=250;stealthEnterPhase(other,'INVESTIGATE');
+  const s=stealthPerceptionState(e),n=_redMesaNoise,previous=n.alarm;
+  const broadcast=s.phase!=='ALERT'||!previous||n.clock-previous.at>=STEALTH_PERCEPTION.loseMs||!shovelSameLayer(e,previous);
+  // Refresh one shared last-seen report in O(1). Only a new combat alert
+  // walks the roster; recipients do not recursively broadcast to each other.
+  const depth=shovelPlayerDepth(e);
+  const alarm=previous&&previous.at===n.clock&&previous.x===x&&previous.y===y&&previous.shovelDepth===depth?previous:
+    (n.alarm={id:++n.alarmId,x,y,at:n.clock,shovelLevel:currentLevel,shovelDepth:depth});
+  stealthAcceptAlarm(e,alarm);
+  if(broadcast)for(const other of enemiesList){
+    if(other===e||!stealthPerceptionActor(other)||!shovelSameLayer(other,e))continue;
+    stealthAcceptAlarm(other,alarm);
   }
+}
+function stealthCloseSight(e,target){
+  const dx=target.x-e.x,dy=target.y-e.y;
+  if(dx*dx+dy*dy>STEALTH_PERCEPTION.instantRange*STEALTH_PERCEPTION.instantRange)return null;
+  return stealthPerceptionVisible(e,target);
+}
+function stealthTurnToward(e,s,angle,dt,immediate=false){
+  if(!Number.isFinite(angle)||!doTick||isPaused)return;
+  // Consume the shared shoulder filter here, so its finally block cannot
+  // soften an urgent reaction for a second time. Ordinary patrols retain
+  // their existing turns. Sound deliberately orients on its recorded source.
+  const facing=e._entityFacing;
+  const shared=facing&&facing.active&&facing.beginFrame===frameCount;
+  const turn=shared?facing:s.turn||(s.turn={angle:e.aimAngle||0,velocity:0,frame:-1});
+  if(immediate){turn.angle=angle;turn.velocity=0;turn.target=angle;turn.frame=frameCount;}
+  else if(turn.frame!==frameCount){
+    if(!shared&&Math.abs(Math.atan2(Math.sin(e.aimAngle-turn.angle),Math.cos(e.aimAngle-turn.angle)))>.0001){turn.angle=e.aimAngle;turn.velocity=0;}
+    turn.frame=frameCount;turn.target=angle;
+    entityTurnHeading(turn,angle,dt,STEALTH_PERCEPTION.turnRate,STEALTH_PERCEPTION.turnResponseMs);
+  }
+  e.aimAngle=turn.angle;
 }
 function stealthMoveToward(e,s,x,y,speed,dt){
   const distance=Math.hypot(x-e.x,y-e.y);if(distance<14){e.isMoving=false;return true;}
-  const wanted=Math.atan2(y-e.y,x-e.x),step=speed*Math.min(3,dt/16.67);
-  const heading=steerAvoid(e,wanted,step,(nx,ny)=>e.checkCol(nx,ny));
+  const urgent=s.phase==='INVESTIGATE'||s.phase==='SEARCH';
+  const wanted=Math.atan2(y-e.y,x-e.x),step=Math.min(distance,speed*Math.min(3,dt/16.67));
+  const heading=steerAvoid(e,wanted,step,s.blocked||(s.blocked=(nx,ny)=>e.checkCol(nx,ny)));
   const m=e.attemptMove(Math.cos(heading)*step,Math.sin(heading)*step);
-  e.isMoving=Math.hypot(m.x,m.y)>.01;
-  if(e.isMoving){e.moveAngle=heading;e.walkCycle+=.16*dt/16.67;}
-  // Gradual turns make looking directions readable and retain rear approaches.
-  e.aimAngle+=(Math.atan2(Math.sin(heading-e.aimAngle),Math.cos(heading-e.aimAngle)))*Math.min(1,dt/180);
+  const travelled=Math.hypot(m.x,m.y);e.isMoving=travelled>.01;
+  if(e.isMoving){e.moveAngle=heading;e.walkCycle+=urgent?.2*travelled/2.45:.16*dt/16.67;}
+  if(urgent){s.searchFacing=null;stealthTurnToward(e,s,heading,dt);}
+  else e.aimAngle+=Math.atan2(Math.sin(heading-e.aimAngle),Math.cos(heading-e.aimAngle))*Math.min(1,dt/180);
   e.armDrag=lerp(e.armDrag||0,e.isMoving?1:0,.15);return false;
 }
 function stealthUpdateEnemy(e,spd=1){
@@ -60980,12 +61018,18 @@ function stealthUpdateEnemy(e,spd=1){
   const layerNow=shovelActorsVisible(e,target);
   if(s.layerVisible===false&&layerNow)s.sampleMs=STEALTH_PERCEPTION.senseMs;
   s.layerVisible=layerNow;
+  const alarm=n.alarm;
+  if(alarm&&s.alarmId!==alarm.id&&n.clock-alarm.at<STEALTH_PERCEPTION.loseMs&&shovelSameLayer(e,alarm))stealthAcceptAlarm(e,alarm);
   const hurt=e.hp<s.health;s.health=e.hp;
   // External CHASE orders (damage, triggered encounters, turned towns) are
   // explicit alerts and must not be undone by a previously curious guard.
   if(hurt||e.state==='CHASE'&&s.phase!=='ALERT')stealthAlert(e,target.x,target.y);
+  // Close exposed targets are recognized on this frame, without waiting for
+  // the staggered long-range sense slice. The normal cone/cover rays still apply.
+  const closeVisible=s.phase==='ALERT'?null:stealthCloseSight(e,target);
+  if(closeVisible){s.visible=true;stealthAlert(e,target.x,target.y);}
   if(s.sampleMs>=STEALTH_PERCEPTION.senseMs){
-    const elapsed=Math.min(200,s.sampleMs);s.sampleMs=0;s.visible=stealthPerceptionVisible(e,target);
+    const elapsed=Math.min(200,s.sampleMs);s.sampleMs=0;s.visible=closeVisible===null?stealthPerceptionVisible(e,target):closeVisible;
     if(e.aggroTarget&&Number.isFinite(e.aggroTimer)){
       e.aggroTimer-=elapsed/16.67;if(e.aggroTimer<=0)e.aggroTarget=null;
     }
@@ -60997,40 +61041,51 @@ function stealthUpdateEnemy(e,spd=1){
       s.recognitionMs+=elapsed;s.suspicion=Math.min(1,s.suspicion+rate*elapsed/1000);s.lostMs=0;
       e.lastKnownX=s.goalX=target.x;e.lastKnownY=s.goalY=target.y;
       const grace=STEALTH_PERCEPTION.graceMs+(1-light)*700+distance*.65;
-      if(s.phase!=='ALERT'&&s.suspicion>=1&&s.recognitionMs>=grace)stealthAlert(e,target.x,target.y);
+      if(s.phase==='ALERT'||s.suspicion>=1&&s.recognitionMs>=grace)stealthAlert(e,target.x,target.y);
       else if(s.phase==='PATROL')stealthEnterPhase(e,'CURIOUS');
     }else{s.recognitionMs=Math.max(0,s.recognitionMs-elapsed);s.suspicion=Math.max(0,s.suspicion-elapsed*(s.phase==='ALERT'?0:.00010));}
-    // Hearing observes the event's historical position once, never the live
-    // player's position. High walls attenuate sound instead of granting LOS.
-    for(const event of n.events){
-      if(event.id<=s.heardId)continue;
-      s.heardId=event.id;const distance=Math.hypot(event.x-e.x,event.y-e.y);
-      if(distance>event.radius)continue;
-      const clear=hasLOS(e.x,e.y,event.x,event.y),reach=event.radius*(clear?1:.42);
-      if(distance>reach||s.phase==='ALERT')continue;
-      s.goalX=event.x;s.goalY=event.y;s.suspicion=Math.max(s.suspicion,event.kind==='SHOT'?.4:.18);
-      s.waitMs=STEALTH_PERCEPTION.curiousMs;
-      if(s.phase==='PATROL'||s.phase==='SEARCH')stealthEnterPhase(e,'CURIOUS');
-    }
+  }
+  // Hearing consumes each bounded event immediately, without waiting for the
+  // sight slice. It observes the historical source once, never a hidden
+  // player's current position; high walls still attenuate the sound.
+  for(const event of n.events){
+    if(event.id<=s.heardId)continue;
+    s.heardId=event.id;const distance=Math.hypot(event.x-e.x,event.y-e.y);
+    if(distance>event.radius||s.phase==='ALERT')continue;
+    const clear=hasLOS(e.x,e.y,event.x,event.y),reach=event.radius*(clear?1:.42);
+    if(distance>reach)continue;
+    s.goalX=event.x;s.goalY=event.y;s.searchFacing=null;
+    s.suspicion=Math.max(s.suspicion,event.kind==='SHOT'?.4:.18);
+    s.waitMs=STEALTH_PERCEPTION.curiousMs;
+    if(s.phase==='PATROL'||s.phase==='SEARCH')stealthEnterPhase(e,'CURIOUS');
+    if(distance>.01){stealthTurnToward(e,s,Math.atan2(event.y-e.y,event.x-e.x),dt,true);s.heardTurnFrame=frameCount;}
+  }
+  if(s.phase!=='ALERT'&&s.heardTurnFrame===frameCount&&stealthCloseSight(e,target)){
+    s.visible=true;stealthAlert(e,target.x,target.y);
   }
   // Concealment takes effect immediately rather than waiting for the sight
   // slice, especially when ducking back behind waist-high cover after a peek.
   if(s.visible&&(!shovelActorsVisible(e,target)||stealthHiddenByLowCover(e,target)))s.visible=false;
   if(s.phase==='ALERT'){
     if(!s.visible)s.lostMs+=dt;
-    if(s.lostMs>=STEALTH_PERCEPTION.loseMs){stealthEnterPhase(e,'SEARCH');s.suspicion=.65;s.recognitionMs=0;}
+    if(s.lostMs>=STEALTH_PERCEPTION.loseMs){stealthEnterPhase(e,'SEARCH');s.suspicion=.65;s.recognitionMs=0;s.searchFacing=null;}
     else{e.loseSightTimer=Math.max(1,(STEALTH_PERCEPTION.loseMs-s.lostMs)/16.67);
       s.handled=false;s.distance=s.visible?Math.hypot(target.x-e.x,target.y-e.y):Math.hypot(s.goalX-e.x,s.goalY-e.y);
       s.angle=Math.atan2((s.visible?target.y:s.goalY)-e.y,(s.visible?target.x:s.goalX)-e.x);return s;}
   }
   if(s.phase==='CURIOUS'){
-    e.isMoving=false;e.aimAngle+=Math.atan2(Math.sin(Math.atan2(s.goalY-e.y,s.goalX-e.x)-e.aimAngle),Math.cos(Math.atan2(s.goalY-e.y,s.goalX-e.x)-e.aimAngle))*Math.min(1,dt/250);
+    e.isMoving=false;stealthTurnToward(e,s,Math.atan2(s.goalY-e.y,s.goalX-e.x),dt);
     if(s.phaseMs>=STEALTH_PERCEPTION.curiousMs)stealthEnterPhase(e,'INVESTIGATE');
   }else if(s.phase==='INVESTIGATE'){
-    if(stealthMoveToward(e,s,s.goalX,s.goalY,1.25*spd,dt)||s.phaseMs>6000){stealthEnterPhase(e,'SEARCH');s.recognitionMs=0;}
+    if(stealthMoveToward(e,s,s.goalX,s.goalY,STEALTH_PERCEPTION.investigateSpeed*spd,dt)||s.phaseMs>6000){stealthEnterPhase(e,'SEARCH');s.recognitionMs=0;s.searchFacing=null;}
   }else if(s.phase==='SEARCH'){
-    if(Math.hypot(e.x-s.goalX,e.y-s.goalY)>18&&s.phaseMs<3500)stealthMoveToward(e,s,s.goalX,s.goalY,1.05*spd,dt);
-    else{e.isMoving=false;e.aimAngle+=dt*.00038*Math.sin(s.phaseMs*.001);}
+    if(Math.hypot(e.x-s.goalX,e.y-s.goalY)>18&&s.phaseMs<3500)stealthMoveToward(e,s,s.goalX,s.goalY,STEALTH_PERCEPTION.searchSpeed*spd,dt);
+    else{
+      e.isMoving=false;
+      if(!Number.isFinite(s.searchFacing)){s.searchFacing=e.aimAngle;s.searchScanMs=0;}
+      s.searchScanMs+=dt;
+      stealthTurnToward(e,s,s.searchFacing+Math.sin(s.searchScanMs*.0013),dt);
+    }
     if(s.phaseMs>STEALTH_PERCEPTION.searchMs&&!s.visible){s.suspicion=0;stealthEnterPhase(e,'PATROL');s.waitMs=500;}
   }else if(e.frontierBountyId==='RED_MESA'&&redMesaStealthContext()){
     const route=e.redMesaPatrol||[{x:s.homeX,y:s.homeY},{x:s.homeX+65,y:s.homeY}];
