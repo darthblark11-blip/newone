@@ -28,6 +28,7 @@ uniform vec3 uLight;
 uniform vec3 uColor;
 uniform vec3 uBands;
 uniform vec2 uThresholds;
+uniform float uShadeContrast;
 uniform float uInk;
 uniform float uAlpha;
 out vec4 oColor;
@@ -35,6 +36,7 @@ void main() {
   float diffuse = dot(normalize(vNormal), uLight)*0.5+0.5;
   float shade = diffuse < uThresholds.x ? uBands.x :
     diffuse < uThresholds.y ? uBands.y : uBands.z;
+  shade = mix(1.0, shade, uShadeContrast);
   vec3 color = mix(uColor*shade, vec3(0.055,0.045,0.055), uInk);
   oColor = vec4(color, uAlpha);
 }`;
@@ -48,12 +50,97 @@ void main() {
   let canvas = null, gl = null, program = null, uniforms = null;
   let meshes = Object.create(null), source = null, failure = '', failed = false;
   let lost = false, generation = 0;
+  const lightDirection=new Float32Array(3),localKeys=new Array(4),localWeights=new Float64Array(4);
+  const lighting={sunWeight:0,localWeight:0,contrast:1,direction:lightDirection,localSources:0};
   const now = () => typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
   const api = { enabled:true, maxSize:1024, stats, ensure, draw, validateAsset, dispose,
+    sampleLighting,
     get canvas(){return canvas;}, get gl(){return gl;},
     get failure(){return failure;}, get ready(){return !!program&&!lost&&!failed;},
     getDiagnostics(){return {enabled:api.enabled,ready:api.ready,failure,generation,
-      width:canvas?canvas.width:0,height:canvas?canvas.height:0,...stats};} };
+      width:canvas?canvas.width:0,height:canvas?canvas.height:0,...stats,
+      lighting:{sunWeight:lighting.sunWeight,localWeight:lighting.localWeight,
+        contrast:lighting.contrast,direction:Array.from(lighting.direction),localSources:lighting.localSources}};} };
+
+  const unitClamp=value=>Math.max(0,Math.min(1,Number(value)||0));
+  const smooth=(a,b,value)=>{const t=unitClamp((value-a)/Math.max(1e-8,b-a));return t*t*(3-2*t);};
+  function readLightTerm(fn,fallback) {
+    try {const value=fn();return Number.isFinite(value)?value:fallback;}catch(_){return fallback;}
+  }
+
+  // This is relative material shading only. The existing world pass continues
+  // to own brightness, lamp color, wall occlusion, fog, and cast shadows.
+  // Using the same emitter falloff/cone as that pass prevents a fixed solar
+  // cheek shadow from surviving at night or under a nearby lamp.
+  function sampleLighting(snapshot,transform,override) {
+    const day=unitClamp(readLightTerm(()=>sceneLightDaylight(),1));
+    const sky=unitClamp(readLightTerm(()=>skyDiffusion(),0));
+    const key=unitClamp(readLightTerm(()=>keyStrength(),1));
+    // Sky-term reads refresh LIGHT_DX/DY. Read the bearing afterward, including
+    // clock/save changes made in this very frame.
+    const slope=readLightTerm(()=>1/Math.max(.35,shadowLengthScale()*1.35),.8);
+    const dx=typeof LIGHT_DX==='number'?LIGHT_DX:.6,dy=typeof LIGHT_DY==='number'?LIGHT_DY:.8;
+    const sunLength=Math.hypot(dx,dy,slope)||1;
+    const sunWeight=.55*day*key*(1-.75*sky);
+    let x=-dx/sunLength*sunWeight,y=-dy/sunLength*sunWeight,z=slope/sunLength*sunWeight;
+    let localWeight=0,n=0;
+    const origin=snapshot&&snapshot.worldOrigin;
+    if(origin&&Number.isFinite(origin.x)&&Number.isFinite(origin.y)) {
+      const head=snapshot.sockets&&snapshot.sockets.head||emptyOptions;
+      const px=origin.x+(Number(head.x)||0),py=origin.y+(Number(head.y)||0),pz=(Number(origin.z)||0)+(Number(head.z)||0);
+      let emitters=null;
+      try {if(typeof sceneEmitters==='function')emitters=sceneEmitters();}catch(_){}
+      if(emitters)for(let i=0;i<emitters.length;i++) {
+        const e=emitters[i];if(!e||!(e.r>0)||!(e.p>.004)||!Number.isFinite(e.x)||!Number.isFinite(e.y))continue;
+        const ex=e.x-px,ey=e.y-py,distance=Math.hypot(ex,ey),r=distance/e.r;
+        if(r>=1)continue;
+        let cone=1;
+        if(Number.isFinite(e.half)&&Number.isFinite(e.aim)) {
+          const toward=distance>.0001?(-ex*Math.cos(e.aim)-ey*Math.sin(e.aim))/distance:1;
+          cone=smooth(Math.cos(e.half),Math.cos(Number.isFinite(e.inner)?e.inner:e.half*.65),toward);
+          cone=Math.max(cone,(Number(e.spill)||0)*(1-smooth(0,Number(e.spillR)||1,distance)));
+        }
+        if(cone<=.002)continue;
+        const c=e.c||defaultColor,luma=Math.max(0,(Number(c[0])||0)*.30+(Number(c[1])||0)*.59+(Number(c[2])||0)*.11);
+        const weight=e.p*(.35+.85*(1-day))*(1-r)*(1-r)*cone*luma;
+        if(!(weight>.002)||(n===4&&weight<=localWeights[n-1]))continue;
+        let at=n<4?n++:3;
+        while(at>0&&weight>localWeights[at-1]){localWeights[at]=localWeights[at-1];localKeys[at]=localKeys[at-1];at--;}
+        localWeights[at]=weight;localKeys[at]=e;
+      }
+      for(let i=0;i<n;i++) {
+        const e=localKeys[i],weight=localWeights[i],ex=e.x-px,ey=e.y-py;
+        // Match the world's lighting normal frame, including its small minimum
+        // upward component for source fixtures at or below the receiver.
+        const nativeGround=readLightTerm(()=>glRigEmitterGround(e),NaN);
+        const sourceGround=Number.isFinite(nativeGround)?nativeGround:readLightTerm(()=>groundElev(e.x,e.y),0);
+        const sourceHeight=readLightTerm(()=>glRigEmitterHeight(e,sourceGround)+glRigHeightOrigin(),
+          (Number(e.z)||0)+(e.b&&e.b.isCivic?0:sourceGround));
+        const ez=Math.max(4,sourceHeight-pz),length=Math.hypot(ex,ey,ez)||1;
+        x+=ex/length*weight;y+=ey/length*weight;z+=ez/length*weight;localWeight+=weight;
+      }
+    }
+    let contrast=unitClamp((sunWeight+localWeight)/.55);
+    if(override&&override.direction) {
+      const v=override.direction;x=Number(v[0])||0;y=Number(v[1])||0;z=Number(v[2])||0;
+      if(Number.isFinite(override.contrast))contrast=unitClamp(override.contrast);
+    }
+    // Mesh positions use the target's current local XY frame. Compensate its
+    // rotation/scale so a corpse Graphics transform cannot rotate the sun.
+    if(transform) {
+      const determinant=transform.a*transform.d-transform.b*transform.c;
+      if(Math.abs(determinant)>1e-12) {
+        const tx=(transform.d*x-transform.c*y)/determinant;
+        const ty=(-transform.b*x+transform.a*y)/determinant;
+        const length=Math.hypot(tx,ty),magnitude=Math.hypot(x,y);
+        if(length>1e-12){x=tx/length*magnitude;y=ty/length*magnitude;}
+      }
+    }
+    const length=Math.hypot(x,y,z)||1;
+    lightDirection[0]=x/length;lightDirection[1]=y/length;lightDirection[2]=z/length;
+    lighting.sunWeight=sunWeight;lighting.localWeight=localWeight;lighting.localSources=n;lighting.contrast=contrast;
+    return lighting;
+  }
 
   function validateAsset(asset) {
     const errors = []; let triangles = 0, count = 0;
@@ -149,7 +236,7 @@ void main() {
       gl.linkProgram(program);gl.deleteShader(vertex);gl.deleteShader(fragment);
       if(!gl.getProgramParameter(program,gl.LINK_STATUS)) throw Error(gl.getProgramInfoLog(program)||'Player shader link failed');
       stats.programCreates++;uniforms={};
-      for(const name of ['uModel','uNormal','uBounds','uDepth','uOutline','uLight','uColor','uBands','uThresholds','uInk','uAlpha'])
+      for(const name of ['uModel','uNormal','uBounds','uDepth','uOutline','uLight','uColor','uBands','uThresholds','uShadeContrast','uInk','uAlpha'])
         uniforms[name]=gl.getUniformLocation(program,name);
       for(const name of Object.keys(asset.meshes)) {
         const mesh=asset.meshes[name],vao=gl.createVertexArray(),buffers=[];
@@ -356,22 +443,9 @@ void main() {
       gl.uniform4f(uniforms.uBounds,x,y,1/w,1/h);
       const minZ=bounds[2]-pad,maxZ=bounds[5]+pad;
       gl.uniform2f(uniforms.uDepth,minZ,1/Math.max(.1,maxZ-minZ));
-      const dx=typeof LIGHT_DX==='number'?LIGHT_DX:.6,dy=typeof LIGHT_DY==='number'?LIGHT_DY:.8;
-      const slope=typeof shadowLengthScale==='function'?1/Math.max(.35,shadowLengthScale()*1.35):.8;
-      let lx=-dx,ly=-dy;
-      if(transform) {
-        const determinant=transform.a*transform.d-transform.b*transform.c;
-        if(Math.abs(determinant)>1e-12) {
-          const x=(transform.d*lx-transform.c*ly)/determinant;
-          const y=(-transform.b*lx+transform.a*ly)/determinant;
-          const length=Math.hypot(x,y),magnitude=Math.hypot(dx,dy);
-          if(length>1e-12){lx=x/length*magnitude;ly=y/length*magnitude;}
-        }
-      }
-      const length=Math.hypot(dx,dy,slope)||1;
-      // Mesh coordinates have screen-down Y; the world's shadow bearing points
-      // away from the sun. Absolute daylight/lamps remain in the world pass.
-      gl.uniform3f(uniforms.uLight,lx/length,ly/length,slope/length);
+      const light=sampleLighting(snapshot,transform,options.lighting);
+      gl.uniform3fv(uniforms.uLight,light.direction);
+      gl.uniform1f(uniforms.uShadeContrast,light.contrast);
       const toon=source.toon||emptyOptions,bands=toon.bands||defaultBands,thresholds=toon.thresholds||defaultThresholds;
       gl.uniform3f(uniforms.uBands,bands[0],bands[1],bands[2]);
       gl.uniform2f(uniforms.uThresholds,thresholds[0],thresholds[1]);

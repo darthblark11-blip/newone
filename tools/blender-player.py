@@ -159,13 +159,17 @@ def mesh_object(name, geometry, collection):
 
 def make_library(collection):
     geometries={}
-    g=Geometry().sphere()
+    # A round, featureless silhouette in every view, including fallen bodies.
+    # Facial marks stay on the surface; ears and the projecting nose formerly
+    # extended the head bounds and made rotated/corpse heads read as an egg.
+    g=Geometry().sphere(sides=24,rings=16)
     for sign in [-1,1]:
-        g.sphere((-.03,sign*.96,-.03),(.16,.15,.29),'skin',12,6)
         g.sphere((.91,sign*.34,.10),(.075,.10,.075),'ink',10,6)
         g.box((.89,sign*.34,.28),(.09,.22,.045),'wood')
-    g.sphere((.98,0,-.06),(.21,.16,.20),'skin',10,6)
     g.box((.88,0,-.43),(.08,.30,.025),'wood')
+    # Tiny surface marks must never alter the spherical outline. Their inner
+    # geometry can remain under the skin, while their exposed faces sit on it.
+    g.vertices=[tuple(Vector(v)/max(1,Vector(v).length)) for v in g.vertices]
     geometries['head']=g
     geometries['torso']=Geometry().loft([(-1,.60,.60),(-.65,.85,.76),(.25,1,.90),(.72,.91,.76),(1,.60,.50)],'shirt','Z',16)
     geometries['pelvis']=Geometry().sphere(scale=(.84,1,.67),material='pants')
@@ -313,7 +317,7 @@ def assemble(body_collection,equipment_collection):
     bpy.ops.object.mode_set(mode='OBJECT');rig.show_in_front=True
     source_part('Shirt','torso',(0,0,1.20),(.19,.265,.29),bone='chest',collection=body_collection)
     source_part('Trousers pelvis','pelvis',(-.015,0,.93),(.17,.20,.16),bone='pelvis',collection=body_collection)
-    source_part('Bald head','head',(.015,0,1.66),(.145,.14,.17),bone='head',collection=body_collection)
+    source_part('Bald head','head',(.015,0,1.66),(.165,.165,.165),bone='head',collection=body_collection)
     for side,sign in [('L',1),('R',-1)]:
         for semantic,width in [('upper_arm',.23),('forearm',.184),('thigh',.28),('shin',.22)]:
             definition=next(b for b in bone_defs if b[0]==f'{semantic}.{side}')
@@ -330,10 +334,10 @@ def assemble(body_collection,equipment_collection):
     for name,semantic,center,scale,bone in [
         ('Armor vest','vest',(0,0,1.20),(.20,.27,.30),'chest'),
         ('Chemist coat','coat',(0,0,1.20),(.205,.28,.30),'chest'),
-        ('Ninja hood','hood',(.015,0,1.66),(.145,.14,.17),'head'),
+        ('Ninja hood','hood',(.015,0,1.66),(.165,.165,.165),'head'),
         ('Cowboy hat','cowboy_hat',(.015,0,1.78),(.145,.14,.15),'head'),
-        ('Armor helmet','helmet',(.015,0,1.66),(.145,.14,.17),'head'),
-        ('Armor visor','visor',(.015,0,1.66),(.145,.14,.17),'head'),
+        ('Armor helmet','helmet',(.015,0,1.66),(.165,.165,.165),'head'),
+        ('Armor visor','visor',(.015,0,1.66),(.165,.165,.165),'head'),
         ('Jetpack','jetpack',(-.24,0,1.22),(.25,.30,.32),'chest')]:
         source_part(name,semantic,center,scale,bone=bone,visible=False,collection=equipment_collection)
     for i,name in enumerate(['pistol','revolver','smg','rifle','shotgun','coach_gun','rocket','bow','taser','particle_beam','sword','pickaxe','shovel','cannon','grenade','flask']):

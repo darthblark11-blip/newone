@@ -82,7 +82,7 @@
   "stats": {
     "draws": 68,
     "meshUploads": 35,
-    "triangles": 8058,
+    "triangles": 8150,
     "gpuDrawCalls": 2895,
     "contextLosses": 0,
     "contextRestores": 0,
@@ -91,14 +91,14 @@
     "bufferCreates": 105,
     "programCreates": 1,
     "stainDraws": 1,
-    "lastDrawMs": 0.09999999962747097,
-    "totalDrawMs": 145.80000000353903
+    "lastDrawMs": 2.5,
+    "totalDrawMs": 38.300000010058284
   },
   "cpuMs": {
     "median": 0.5,
-    "p95": 6.7000000001862645
+    "p95": 1.900000000372529
   },
-  "sourceBytes": 5209184,
+  "sourceBytes": 5243526,
   "world": {
     "meshDraws": 3,
     "mesh": {
@@ -110,7 +110,7 @@
       "height": 128,
       "draws": 3,
       "meshUploads": 35,
-      "triangles": 8058,
+      "triangles": 8150,
       "gpuDrawCalls": 141,
       "contextLosses": 0,
       "contextRestores": 0,
@@ -119,8 +119,19 @@
       "bufferCreates": 105,
       "programCreates": 1,
       "stainDraws": 0,
-      "lastDrawMs": 0.20000000018626451,
-      "totalDrawMs": 5.099999999627471
+      "lastDrawMs": 8.400000000372529,
+      "totalDrawMs": 12.300000000745058,
+      "lighting": {
+        "sunWeight": 0.5352108389525335,
+        "localWeight": 0,
+        "contrast": 0.9731106162773336,
+        "direction": [
+          -0.1772504597902298,
+          -0.7670320272445679,
+          0.6166394352912903
+        ],
+        "localSources": 0
+      }
     },
     "fault": null,
     "worldLighting": {
@@ -138,7 +149,9 @@
     "assetsAndPose": 324,
     "livingDispatch": 51,
     "corpseAdapter": 77,
-    "nativePoseFidelity": 6869
+    "nativePoseFidelity": 6869,
+    "sphericalHead": 258,
+    "corpseLightingLifetime": 23
   },
   "existingChecksPassed": [
     "check-stance-hits.js (142)",

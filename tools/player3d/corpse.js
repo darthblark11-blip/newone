@@ -1,5 +1,40 @@
 // Blender player bodies use the same floor motion, wall clips and retirement
 // buffers as native corpses. The adapter owns appearance, never death physics.
+let _player3DCorpseOrigin = null;
+
+function player3DCorpseWorldOrigin(c) {
+  if(c&&c._player3DStampWorldOrigin)return c._player3DStampWorldOrigin;
+  if(c&&Number.isFinite(c.x)&&Number.isFinite(c.y)) {
+    return {x:c.x,y:c.y,z:typeof groundElev==='function'?groundElev(c.x,c.y):0};
+  }
+  return _player3DCorpseOrigin||{x:0,y:0,z:0};
+}
+
+function player3DCorpseHeadScale() {
+  return typeof PLAYER3D_HEAD_SCALE==='number'?PLAYER3D_HEAD_SCALE:1.1;
+}
+
+// Player bodies remain cheap static geometry after settling, so their cel
+// bands can follow moving lamps and the sun. Bound the live list; older bodies
+// still become permanent floor marks through the ordinary stamp path.
+function player3DKeepCorpseLive(c) {
+  return !!(c&&c.id&&c.id.isPlayer&&!c.wallSit&&
+    typeof Player3D!=='undefined'&&Player3D.enabled!==false&&Player3D.ensure());
+}
+
+function player3DTrimLiveCorpses(list,limit=8) {
+  let live=0;
+  const floor=c=>c._player3DLightingLive&&!c.wallSit&&
+    !(typeof shovelBelowGroundActor==='function'&&shovelBelowGroundActor(c));
+  for(const c of list)if(floor(c))live++;
+  for(let i=0;live>limit&&i<list.length;) {
+    const c=list[i];
+    if(!floor(c)){i++;continue;}
+    c._player3DLightingLive=false;
+    stampCorpse(c);list.splice(i,1);live--;
+  }
+}
+
 function player3DCorpseReady(r, c) {
   return !!(c && c.id && c.id.isPlayer && r && r.drawingContext &&
     typeof Player3D !== 'undefined' && Player3D.enabled !== false &&
@@ -20,7 +55,7 @@ function player3DCorpsePrimitive(mesh, x, y, z, sx, sy, sz, colour, angle = 0, p
   return {mesh, color:colour, matrix:player3DCorpseMatrix(x,y,z,sx,sy,sz,angle), part};
 }
 
-function player3DCorpseSnapshot(parts) {
+function player3DCorpseSnapshot(parts, owner = null) {
   let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
   for(const p of parts){
     const m=p.matrix;
@@ -31,7 +66,8 @@ function player3DCorpseSnapshot(parts) {
     x0=Math.min(x0,m[12]-rx);x1=Math.max(x1,m[12]+rx);
     y0=Math.min(y0,m[13]-ry);y1=Math.max(y1,m[13]+ry);
   }
-  return {parts,sockets:{},bounds:parts.length?[x0,y0,x1,y1]:[-1,-1,1,1]};
+  return {parts,sockets:{},worldOrigin:player3DCorpseWorldOrigin(owner),
+    bounds:parts.length?[x0,y0,x1,y1]:[-1,-1,1,1]};
 }
 
 function player3DCorpseProxy(c) {
@@ -88,9 +124,11 @@ function player3DCorpsePose(c, options = {}) {
       leg.knee.x+=co*12*kick*scale;leg.knee.y+=si*12*kick*scale;
       leg.ankle.x+=co*27*kick*scale;leg.ankle.y+=si*27*kick*scale;}
   }
-  return player3DPose(player3DCorpseProxy(c),{identity:player3DCorpseIdentity(c),pose,weapon:false,
+  const snapshot=player3DPose(player3DCorpseProxy(c),{identity:player3DCorpseIdentity(c),pose,weapon:false,
     widthScale:scale/(typeof RAG_SCALE==='number'?RAG_SCALE:.8),
     includeParts:options.includeParts,excludeParts:options.excludeParts});
+  snapshot.worldOrigin=player3DCorpseWorldOrigin(c);
+  return snapshot;
 }
 
 function player3DCorpseFilter(snapshot, filter) {
@@ -110,6 +148,7 @@ function player3DCorpsePartIs(p, region) {
 }
 
 function player3DCorpseRender(r, snapshot, options) {
+  if(_player3DCorpseOrigin)snapshot={...snapshot,worldOrigin:_player3DCorpseOrigin};
   return !snapshot.parts.length || Player3D.draw(snapshot,r.drawingContext,options||{});
 }
 
@@ -172,7 +211,7 @@ function player3DCorpseHeadwear(r,c,snapshot) {
   const mesh=hw==='STETSON'?'cowboy_hat':hw==='HOOD'?'hood':'helmet';
   const col=player3DCorpseColour(c.id.hatCol,[103,78,46]);
   const part=player3DCorpsePrimitive(mesh,head.x+c.hatOff.x*.8,head.y+c.hatOff.y*.8,1.5,7,7,2.6,col,c.hatOff.r,'fallen_headwear');
-  player3DCorpseRender(r,player3DCorpseSnapshot([part]));
+  player3DCorpseRender(r,player3DCorpseSnapshot([part],c));
 }
 
 function player3DCorpseDroppedWeapons(c,snapshot) {
@@ -203,6 +242,7 @@ function drawPlayer3DSeatedCorpse(r,c) {
     legs:l.hips.map((q,i)=>({hip:point(q),knee:point(l.knees[i]),ankle:point(l.heels[i])})),
     torsoWidth:c.bH*.35,torsoDepth:3.5*sc,headRadius:5.5*sc};
   const snapshot=player3DPose(player3DCorpseProxy(c),{identity:player3DCorpseIdentity(c),pose,weapon:false});
+  snapshot.worldOrigin=player3DCorpseWorldOrigin(c);
   if(c.dT===9||c.dT===4)snapshot.parts=snapshot.parts.filter(p=>!player3DCorpsePartIs(p,'head'));
   r.push();r.translate(c.x,c.y);
   try{player3DCorpseRender(r,snapshot);player3DCorpseHeadwear(r,c,snapshot);}finally{r.pop();}
@@ -215,7 +255,8 @@ function drawPlayer3DSeatedCorpse(r,c) {
 function drawPlayer3DFallenHead(r,id,fall,progress,wear=true) {
   if(!id||!id.isPlayer||typeof Player3D==='undefined'||!Player3D.enabled||!Player3D.ensure()||!r.drawingContext)return false;
   const skin=player3DCorpseColour(id.skinCol,[235,180,140]);
-  const parts=[player3DCorpsePrimitive('head',0,0,5.5,5.5,5.5,5.5,skin,0,'head')];
+  const radius=5.5*player3DCorpseHeadScale();
+  const parts=[player3DCorpsePrimitive('head',0,0,radius,radius,radius,radius,skin,0,'head')];
   if(wear){const hw=headwearOf(id),mesh=hw==='STETSON'?'cowboy_hat':hw==='HOOD'?'hood':hw?'helmet':null;
     if(mesh)parts.push(player3DCorpsePrimitive(mesh,0,0,8,6,6,3,player3DCorpseColour(id.hatCol,[57,59,64]),0,'headwear'));}
   return player3DCorpseRender(r,player3DCorpseSnapshot(parts));
@@ -242,7 +283,7 @@ function drawPlayer3DCorpseFragment(r,c,kind) {
       player3DCorpsePrimitive('forearm',5,0,4,9,6.5,6.5,shirt,0,'forearm_'+side),
       player3DCorpsePrimitive('hand',11,0,4,4,3,3,skin,0,'hand_'+side)];
   }
-  return player3DCorpseRender(r,player3DCorpseSnapshot(parts));
+  return player3DCorpseRender(r,player3DCorpseSnapshot(parts,c));
 }
 
 function player3DCorpseGibParts(c, bits) {
@@ -252,8 +293,11 @@ function player3DCorpseGibParts(c, bits) {
     const mesh=type==='skull'||type==='skull_frag'?'head':type==='bone'?'shin':type==='pelvis'?'pelvis':'torso';
     const colour=type==='cloth'?player3DCorpseColour(c.pC,[30,80,180]):/skull|ribcage|pelvis|bone/.test(type)?bone:
       type==='brain'?[173,78,107]:c.isCharred?[28,23,24]:[119,7,24];
-    const sx=type==='bone'?sz: type==='ribcage'?7:sz*.52,sy=type==='bone'?3:type==='ribcage'?9:sz*.44;
-    return player3DCorpsePrimitive(mesh,b.x||0,(b.y||0)-(b.z||0),2+(b.z||0),sx,sy,Math.max(1.2,sz*.32),colour,b.rot||0,'gib_'+i);
+    const skull=type==='skull'||type==='skull_frag';
+    const radius=sz*.52*player3DCorpseHeadScale();
+    const sx=skull?radius:type==='bone'?sz:type==='ribcage'?7:sz*.52;
+    const sy=skull?radius:type==='bone'?3:type==='ribcage'?9:sz*.44;
+    return player3DCorpsePrimitive(mesh,b.x||0,(b.y||0)-(b.z||0),2+(b.z||0),sx,sy,skull?radius:Math.max(1.2,sz*.32),colour,b.rot||0,'gib_'+i);
   });
 }
 
@@ -295,7 +339,7 @@ function drawPlayer3DBlastAnatomy(r,c,p) {
 function drawPlayer3DBlastGibs(r,c) {
   if(!player3DCorpseReady(r,c))return false;
   r.push();r.translate(c.x,c.y);
-  try{player3DCorpseRender(r,player3DCorpseSnapshot(player3DCorpseGibParts(c,c.blast.gibs)));}finally{r.pop();}
+  try{player3DCorpseRender(r,player3DCorpseSnapshot(player3DCorpseGibParts(c,c.blast.gibs),c));}finally{r.pop();}
   return true;
 }
 
@@ -322,6 +366,9 @@ function drawPlayer3DFallLimb(r,rig,rg,i,f,shirt,pants,skin,boot,faceDown,id) {
 
 function drawPlayer3DCorpse(r,c) {
   if(!player3DCorpseReady(r,c))return false;
+  const previousOrigin=_player3DCorpseOrigin;
+  _player3DCorpseOrigin=player3DCorpseWorldOrigin(c);
+  try {
   // Existing specialized painters retain their half-plane clips, cuts, floor
   // shadows and effects; their body/head/limb dispatches below are mesh draws.
   if(drawParticleBeamCorpse(r,c))return true;
@@ -370,4 +417,5 @@ function drawPlayer3DCorpse(r,c) {
     }
   }finally{r.pop();}
   player3DCorpseSpray(r,c,snapshot);player3DCorpseDecals(r,c);return true;
+  } finally { _player3DCorpseOrigin=previousOrigin; }
 }

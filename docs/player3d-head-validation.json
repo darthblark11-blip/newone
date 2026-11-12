@@ -1,0 +1,239 @@
+{
+  "headScale": 1.1,
+  "shape": "unit sphere with surface facial marks; no ears or nose",
+  "geometryAndPoseChecks": 258,
+  "corpseLifetimeAndWorldOriginChecks": 23,
+  "retainedPlayerCorpseLimit": 8,
+  "lighting": {
+    "cases": [
+      {
+        "label": "Morning sun",
+        "drawn": true,
+        "left": [
+          223,
+          171,
+          133,
+          255
+        ],
+        "right": [
+          235,
+          180,
+          140,
+          255
+        ],
+        "center": [
+          235,
+          180,
+          140,
+          255
+        ],
+        "leftLuma": 182.42,
+        "rightLuma": 192.1,
+        "lighting": {
+          "sunWeight": 0.11440678279199162,
+          "localWeight": 0,
+          "contrast": 0.20801233234907565,
+          "direction": [
+            0.31920191645622253,
+            -0.6547713279724121,
+            0.6851164698600769
+          ],
+          "localSources": 0
+        }
+      },
+      {
+        "label": "Afternoon sun",
+        "drawn": true,
+        "left": [
+          235,
+          180,
+          140,
+          255
+        ],
+        "right": [
+          163,
+          125,
+          97,
+          255
+        ],
+        "center": [
+          235,
+          180,
+          140,
+          255
+        ],
+        "leftLuma": 192.1,
+        "rightLuma": 133.32,
+        "lighting": {
+          "sunWeight": 0.3025392712283617,
+          "localWeight": 0,
+          "contrast": 0.5500714022333849,
+          "direction": [
+            -0.7775864005088806,
+            -0.36303675174713135,
+            0.5133845210075378
+          ],
+          "localSources": 0
+        }
+      },
+      {
+        "label": "Night / ambient only",
+        "drawn": true,
+        "left": [
+          235,
+          180,
+          140,
+          255
+        ],
+        "right": [
+          235,
+          180,
+          140,
+          255
+        ],
+        "center": [
+          235,
+          180,
+          140,
+          255
+        ],
+        "leftLuma": 192.1,
+        "rightLuma": 192.1,
+        "lighting": {
+          "sunWeight": 0,
+          "localWeight": 0,
+          "contrast": 0,
+          "direction": [
+            0,
+            0,
+            0
+          ],
+          "localSources": 0
+        }
+      },
+      {
+        "label": "Night / lamp on left",
+        "drawn": true,
+        "left": [
+          235,
+          180,
+          140,
+          255
+        ],
+        "right": [
+          103,
+          79,
+          62,
+          255
+        ],
+        "center": [
+          179,
+          137,
+          106,
+          255
+        ],
+        "leftLuma": 192.1,
+        "rightLuma": 84.32999999999998,
+        "lighting": {
+          "sunWeight": 0,
+          "localWeight": 0.6496907496825801,
+          "contrast": 1,
+          "direction": [
+            -0.9562435746192932,
+            0.14343653619289398,
+            0.2549982964992523
+          ],
+          "localSources": 1
+        }
+      },
+      {
+        "label": "Night / lamp on right",
+        "drawn": true,
+        "left": [
+          103,
+          79,
+          62,
+          255
+        ],
+        "right": [
+          235,
+          180,
+          140,
+          255
+        ],
+        "center": [
+          179,
+          137,
+          106,
+          255
+        ],
+        "leftLuma": 84.32999999999998,
+        "rightLuma": 192.1,
+        "lighting": {
+          "sunWeight": 0,
+          "localWeight": 0.6833523805557774,
+          "contrast": 1,
+          "direction": [
+            0.9562435746192932,
+            0.14343653619289398,
+            0.2549982964992523
+          ],
+          "localSources": 1
+        }
+      },
+      {
+        "label": "Same sun / head turned 90\u00b0",
+        "drawn": true,
+        "left": [
+          223,
+          171,
+          133,
+          255
+        ],
+        "right": [
+          235,
+          180,
+          140,
+          255
+        ],
+        "center": [
+          235,
+          180,
+          140,
+          255
+        ],
+        "leftLuma": 182.42,
+        "rightLuma": 192.1,
+        "lighting": {
+          "sunWeight": 0.11440678279199162,
+          "localWeight": 0,
+          "contrast": 0.20801233234907565,
+          "direction": [
+            0.31920191645622253,
+            -0.6547713279724121,
+            0.6851164698600769
+          ],
+          "localSources": 0
+        }
+      }
+    ],
+    "lazySkyRefresh": true,
+    "turnDifference": 0,
+    "graphicsWorldLight": true,
+    "outOfCone": 0,
+    "inCone": 0.8033057851239667,
+    "translatedWorldOrigin": true,
+    "heightFrames": {
+      "hill": true,
+      "civic": true,
+      "canyon": true
+    },
+    "gpuError": 0,
+    "uploadsBefore": 35,
+    "uploadsAfter": 35,
+    "programsBefore": 1,
+    "programsAfter": 1
+  },
+  "preview": "previews/player3d-head-lighting.png",
+  "physicalPhonePerformanceMeasured": false
+}

@@ -5,6 +5,10 @@ bone-attached grip/muzzle/equipment sockets, a breathing preview action, cel
 materials and hidden outfit/equipment variants. The default character is bald,
 with a red shirt, blue trousers and dark boots.
 
+The head has a spherical silhouette with no ears or projecting nose. Small
+eye, eyebrow, and mouth marks stay within the sphere surface. The assembled
+source uses a uniform head scale, matching the round head used on fallen bodies.
+
 `player.glb` contains the visible base character, skeleton, animation and sockets.
 Optional equipment remains available in the `.blend` and runtime mesh library;
 putting every hidden variant in a standard GLB would make them all appear at once.
@@ -69,4 +73,4 @@ pelvis, hand and joint meshes use unit radius. Weapons span X -0.5 to +0.5. The 
 muzzle is the arrow tip and its width remains proportional when aligned in game.
 Severed parts can use `cap` and `torso_cap` meshes for closed cut surfaces.
 
-The default assembled body is 3,988 triangles before its silhouette outline.
+The default assembled body is 4,080 triangles before its silhouette outline.

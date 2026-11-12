@@ -34,6 +34,11 @@ XY uses the existing actor-local world axes; Z is height. Native gameplay
 queries remain the reference for weapon origins and contact positions. A
 renderer call never updates the simulation.
 
+The head mesh is spherical with no ears or projecting nose. It keeps the small
+surface facial marks, uses uniform XYZ scale in living and corpse poses, and is
+intentionally 10% larger than the original projected head. Head centers and the
+native gameplay hit geometry remain unchanged.
+
 Standing, crouched, and prone mesh landmarks and projected proportions follow
 the original painter. Chest and pelvis retain independent native headings;
 authored elbows are preserved. Prone legs come from the stance joints, and
@@ -56,10 +61,19 @@ part and beneath crossing hands. Hit flashes and charred skin use transient
 material colors; they do not modify the saved model.
 
 The mesh shader supplies three relative material bands and silhouette ink.
+Its shading direction blends the live sun with the strongest nearby native
+scene emitters, using their distance falloff, cones, and world heights. Directional
+contrast fades in ambient-only darkness. Snapshots carry `worldOrigin`, including
+the real position while a corpse is rebased into a chunk's Graphics target.
 The existing lighting pass supplies absolute daylight, local lights, atmosphere,
 and shadows. The player retains the existing approximate world-shadow stamp;
 the model does not add a second floor shadow. Blender material node graphs are
 represented by matching runtime parameters rather than exported as GLSL.
+
+The newest eight settled player bodies remain static geometry in the live
+corpse list so their lighting can change without advancing death physics.
+Older bodies, distant bodies, and bodies retired on map exit use the normal
+floor stamp. Enemy bodies retain their existing retirement behavior.
 
 `Player3D.getDiagnostics()` reports context readiness, failure details, successful
 draws, mesh uploads, GPU resource creation, and context restoration counts.
@@ -70,6 +84,9 @@ draws, mesh uploads, GPU resource creation, and context restoration counts.
 node tools/check-player3d.js
 node tools/check-player3d-dispatch.js
 node tools/check-player3d-corpses.js
+node tools/check-player3d-head.js
+node tools/check-player3d-head-corpses.js
+node tools/check-player3d-lighting.cjs
 node tools/check-player3d-fidelity.js
 node tools/check-player3d-browser.cjs
 node tools/visual-player3d-fidelity.cjs

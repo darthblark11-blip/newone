@@ -2,6 +2,7 @@
 // The orthographic mesh camera drops Z: native contact and muzzle XY remain
 // authoritative while the height/IK solve gives the model volume and depth.
 // No animation clocks, random numbers or mutable game state live in this file.
+const PLAYER3D_HEAD_SCALE = 1.1;
 const Player3DMath = (() => {
   const clamp=(x,a=0,b=1)=>Math.max(a,Math.min(b,Number(x)||0));
   const point=(x=0,y=0,z=0)=>({x:Number(x)||0,y:Number(y)||0,z:Number(z)||0});
@@ -376,8 +377,11 @@ function player3DPose(actor, options = {}) {
     oval('torso',p.chest,torsoDepth,torsoWidth,torsoLength,palette.shirt,'torso');
   }
   const neck=mix(p.chest,p.head,.68);bone('forearm',neck,p.head,4.8,palette.skin,'neck');
-  if(nativeFrames)fittedOval('head',p.head,p.headProjectedDiameter,p.headProjectedDiameter,6.3,palette.skin,'head',headBasis,p.chestHeading);
-  else oval('head',p.head,Number(p.headRadius)||5.5,Number(p.headRadius)||5.5,6.3,palette.skin,'head',headBasis);
+  // A genuinely spherical head retains its silhouette through prone rolls
+  // and corpse orientations. The previous unequal depth made fallen heads
+  // read as eggs, even when their standing XY footprint was fitted round.
+  const headRadius=(nativeFrames?p.headProjectedDiameter*.5:Number(p.headRadius)||5.5)*PLAYER3D_HEAD_SCALE;
+  oval('head',p.head,headRadius,headRadius,headRadius,palette.skin,'head',headBasis);
   const arms=p.arms||[],legs=p.legs||[];
   arms.forEach((arm,i)=>{
     const side=arm.side===-1||arm.side===1?arm.side:i?1:-1,tag=side<0?'left':'right';
@@ -505,7 +509,10 @@ function player3DPose(actor, options = {}) {
   }
   if(!parts.length){minx=miny=-1;maxx=maxy=1;}
   const projectedSockets={};for(const name of Object.keys(sockets))projectedSockets[name]=player3DProjectPoint(sockets[name]);
-  return {parts,sockets,projectedSockets,bounds:[minx,miny,maxx,maxy],kind,identity,stains,pose:p,palette};
+  const origin=actor._player3DWorldOrigin||actor;
+  const originZ=Number(origin.z);
+  const worldOrigin={x:Number(origin.x)||0,y:Number(origin.y)||0,z:Number.isFinite(originZ)?originZ:safe(()=>groundElev(Number(origin.x)||0,Number(origin.y)||0),0)};
+  return {parts,sockets,projectedSockets,bounds:[minx,miny,maxx,maxy],kind,identity,stains,pose:p,palette,worldOrigin};
 }
 
 // Renderer and gameplay adapters use the same fixed orthographic projection.
