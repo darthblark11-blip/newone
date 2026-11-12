@@ -20,6 +20,11 @@ const Player3DMath = (() => {
     const x=norm(Math.hypot(raw.x,raw.y,raw.z)>.001?raw:cross(point(0,1,0),z));
     return {x,y:norm(cross(z,x)),z};
   };
+  const postureFrame=(heading,pitch=0)=>{
+    const forward=rotate(point(1,0,0),heading),side=rotate(point(0,1,0),heading);
+    return {x:add(mul(forward,Math.cos(pitch)),point(0,0,-Math.sin(pitch))),
+      y:side,z:add(mul(forward,Math.sin(pitch)),point(0,0,Math.cos(pitch)))};
+  };
   const segment=(a,b,w,d=w)=>{
     const v=sub(b,a),length=Math.max(.001,Math.hypot(v.x,v.y,v.z)),x=mul(v,1/length);
     let y=norm(cross(point(0,0,1),x));if(Math.hypot(y.x,y.y,y.z)<.1)y=point(0,1,0);
@@ -40,7 +45,7 @@ const Player3DMath = (() => {
     const a=value&&value.levels?value.levels:Array.isArray(value)?value:fallback;
     return [0,1,2].map(i=>Math.max(0,Math.min(255,Number(a&&a[i])||0)));
   };
-  return {clamp,point,add,sub,mul,dot,cross,norm,mix,rotate,matrix,frame,segment,elbow,color};
+  return {clamp,point,add,sub,mul,dot,cross,norm,mix,rotate,matrix,frame,postureFrame,segment,elbow,color};
 })();
 
 function player3DPose(actor, options = {}) {
@@ -66,14 +71,18 @@ function player3DPose(actor, options = {}) {
   else if(ninja){palette.shirt=[25,25,33];palette.pants=[22,22,29];}
   else if(cowboy){palette.shirt=[219,196,146];palette.pants=[61,93,118];}
   if(identity.isCharred||c.isCharred)palette.skin=[50,40,40];
-  palette.boot=palette.pants.map(x=>x*.42);
+  palette.boot=palette.pants.map(x=>x*.55);
   const R=safe(()=>figureRig(bw,bh),{upper:11.4,fore:10.1,hand:7.6,upperW:8.4,foreW:6.72,thigh:15.5,shin:15.5,foot:8.4,thighW:9.6,shinW:7.36,TL:23.3,TW:16.1});
   const low=safe(()=>actorStancePose(c),{crouch:0,prone:0,scaleX:1}),floor=clamp(low.prone),crouch=clamp(low.crouch);
   const cover=safe(()=>stanceCoverPoseActive(c),false);
   const stance=(floor>0||crouch>0||cover||c.legInjury)?safe(()=>stanceBodyPose(c),null):null;
   const frame=typeof frameCount==='number'?frameCount:0,cycle=Number(c.walkCycle)||0;
-  const motion=c.isMoving?clamp(c.gait||.3,0,1.5):0,gait=safe(()=>gaitPose(c.gait||0),{swing:motion,lean:0,twist:0,bob:1,bend:0,band:1});
-  const tool=options.weapon===false?'NONE':safe(()=>meleeTool(),'NONE');
+  const motion=c.mounted?clamp(c.gait||0):safe(()=>standingLowerEligible(c)?standingMotionAmount(c):Number(!!c.isMoving),Number(!!c.isMoving));
+  // gaitPose() returns one shared scratch object. Native helper calls below
+  // may sample idle gait while the standing motion envelope is still easing.
+  // Retain this actor's actual gait before those helpers reuse the scratch.
+  const gait={...safe(()=>gaitPose(c.gait||0),{swing:motion,lean:0,twist:0,bob:1,bend:0,band:1})};
+  const tool=options.weapon===false||c.isArmed?'NONE':safe(()=>meleeTool(),'NONE');
   const action=safe(()=>leftHandAction(c),0);
   const rotatePoint=(x,y,z,a=angle)=>rotate(point(x,y,z),a);
   const nativeWorld=p=>point(p.x-c.x,p.y-c.y,Number(p.z)||0);
@@ -94,16 +103,45 @@ function player3DPose(actor, options = {}) {
       });kind='BOXING';
     } else {
       const heading=stance?safe(()=>stanceFacingAngle(c),angle):angle;
-      const size=stance?Number(stance.size)||1:1,torsoHeading=heading+(stance?stance.yaw||0:0);
+      const size=stance?Number(stance.size)||1:1;
+      const lower=!stance?safe(()=>standingLowerPose(c),null):null;
+      const presentation=!stance?safe(()=>standingPresentationPose(c),null):null;
+      const aiming=!!c.isArmed&&c.meleeTimer<=0&&safe(()=>playerAiming(c),false);
+      const twist=stance?stance.yaw||0:presentation?presentation.tw||0:
+        c.isMoving&&!aiming?Math.sin(cycle)*gait.twist*motion:0;
+      const torsoHeading=heading+twist,hipHeading=stance?heading+(stance.hipYaw||0):lower?lower.angle:safe(()=>entityMoveHeading(c),Number(c.moveAngle)||angle);
       const dive=safe(()=>proneDiveLift(c),0),air=(c.mounted?4:0)+Number(c.jetpackHeight||0);
-      const bob=c.isMoving?Math.abs(Math.sin(cycle))*gait.bob*.8:Math.sin(frame*.045+c.x*.01)*.10;
+      let bob=presentation?presentation.bob:(Math.abs(Math.sin(cycle))*2*gait.bob+gait.lean)*motion;
+      if(c.mounted)bob*=.4;
+      if(c.reloadTimer>0&&!safe(()=>oneHandWeapon(c.currentWeapon),true))bob+=Math.sin(frame*.5)*3;
       const local=(x,y,z,a=heading)=>{const q=rotatePoint(x*size,y*size,z,a);q.y-=dive;return q;};
-      p={head:local(stance?stance.head.x:((c.isArmed&&c.reloadTimer<=0)?3:0),stance?stance.head.y:((c.isArmed&&c.reloadTimer<=0)?4:0),headHeight+air+bob),
-        chest:local(stance?stance.chestX:0,stance?stance.chestY:0,chestHeight+air+bob),pelvis:local(stance?stance.hipX:-5,stance?stance.hipY:0,10*(1-.38*crouch-.72*floor)+air),
-        forward:rotatePoint(1,0,0,torsoHeading),arms:[],legs:[]};
+      const braced=c.isArmed&&c.reloadTimer<=0&&c.meleeTimer<=0&&!c.dead&&
+        safe(()=>solidLongGun(c.currentWeapon)||c.currentWeapon===WEAPONS.ROCKET_LAUNCHER,false);
+      const presented=presentation?presentation.t:1;
+      p={head:stance?local(stance.head.x,stance.head.y,headHeight+air):rotatePoint(bob+(braced?3*presented:0),braced?4*presented:0,headHeight+air,torsoHeading),
+        chest:stance?local(stance.chestX,stance.chestY,chestHeight+air):rotatePoint(bob,0,chestHeight+air,torsoHeading),
+        pelvis:stance?local(stance.hipX,stance.hipY,10*(1-.38*crouch-.72*floor)+air):rotatePoint(-5,0,10+air,hipHeading),
+        forward:rotatePoint(1,0,0,torsoHeading),chestHeading:torsoHeading,hipHeading,
+        bodyPitch:floor*Math.PI*.5*(1-2*(stance&&stance.roll?stance.roll.back:0)),
+        torsoProjectedLength:(stance?stance.torsoLength:bw*(typeof TORSO_DEPTH==='number'?TORSO_DEPTH:.84))*size,
+        torsoProjectedWidth:(stance?stance.torsoWidth:bh)*size,headProjectedDiameter:11*size,
+        arms:[],legs:[]};
       const legGeometry=safe(()=>buildHumanLegHitGeometry(c),null);
-      if(legGeometry&&legGeometry.legs) {
-        p.legs=legGeometry.legs.map((l,i)=>{
+      if(stance&&stance.joints) {
+        p.legs=stance.joints.map(j=>({hip:local(j.hip.x,j.hip.y,p.pelvis.z),
+          knee:local(j.knee.x,j.knee.y,Math.max(2,6*(1-crouch))*(1-.65*floor)+air),
+          ankle:local(j.ankle.x,j.ankle.y,1+air),heading:heading+Math.atan2(j.ankle.y-j.knee.y,j.ankle.x-j.knee.x),step:j.step,
+          widths:[R.thighW*.92*size,R.shinW*size,R.shinW*.8*size]}));
+      } else if(legGeometry&&legGeometry.legs) {
+        const rear=safe(()=>standingRearPose(c,lower),null);
+        const nativeStanding=lower&&!rear&&!safe(()=>shovelMantlePose(c),null)&&
+          !safe(()=>tool==='SHOVEL'?shovelDigPose(c,gait,0):null,null);
+        const visibleLegs=nativeStanding?legGeometry.legs.map((l,i)=>{
+          const side=i?1:-1,th=R.thigh*(typeof STAND_FORE_LEG==='number'?STAND_FORE_LEG:.40),sh=R.shin*(typeof STAND_FORE_LEG==='number'?STAND_FORE_LEG:.40);
+          const sx=-10-side*Math.sin(cycle)*12*gait.swing*motion+R.thighW*.5;
+          return {...l,sx,sy:side*6,kx:sx+th*.92,ky:side*6,ax:sx+th*.92+sh,ay:side*6};
+        }):legGeometry.legs;
+        p.legs=visibleLegs.map((l,i)=>{
           const toPoint=(x,y,z)=>rotatePoint(x*(legGeometry.scale||1),y*(legGeometry.scale||1),z,legGeometry.angle||0);
           const lift=c.isMoving?Math.max(0,-Math.cos(cycle+(i?0:Math.PI)))*2*motion:0;
           return {hip:toPoint(l.sx,l.sy,p.pelvis.z),knee:toPoint(l.kx,l.ky,Math.max(2,6*(1-crouch)+lift)*(1-.65*floor)+air),
@@ -114,47 +152,110 @@ function player3DPose(actor, options = {}) {
         const a=Number(c.moveAngle)||angle,stride=Math.sin(cycle+(side<0?Math.PI:0))*motion*7;
         p.legs.push({hip:rotatePoint(-5,side*5,p.pelvis.z,a),knee:rotatePoint(-1+stride,side*5,6,a),ankle:rotatePoint(5+stride,side*5,1,a),heading:a});
       }
-      const presentation=!stance?safe(()=>standingPresentationPose(c),null):null;
       if(presentation&&presentation.arms) {
         const a=angle+(presentation.tw||0),bobX=presentation.bob||0;
         p.arms=presentation.arms.map(arm=>{
           const side=arm.right?1:-1,hz=gunHeight*(.58+.42*presentation.t);
           const shoulder=rotatePoint(arm.sx+bobX,arm.sy,chestHeight+7+air,a),hand=rotatePoint(arm.hx+bobX,arm.hy,hz+air,a);
-          const pole=rotatePoint(arm.ex+bobX,arm.ey,Math.min(shoulder.z,hand.z)-5+air,a);
-          return {side,shoulder,elbow:M.elbow(shoulder,hand,R.upper,R.fore,pole),fist:hand};
+          const elbow=rotatePoint(arm.ex+bobX,arm.ey,Math.min(shoulder.z,hand.z)-3,a);
+          return {side,shoulder,elbow,fist:hand,handDiameter:8,widths:[R.upperW,(R.upperW+R.foreW)*.5,R.foreW*.84]};
         }).sort((a,b)=>a.side-b.side);
         weaponRecords=presentation.weapons.map(g=>({hand:rotatePoint(g.x+bobX,g.y,gunHeight*(.58+.42*presentation.t)+air,a),
           muzzle:rotatePoint(g.muzzle.x+bobX,g.muzzle.y,gunHeight*(.58+.42*presentation.t)+Math.sin(g.elevation||0)*20+air,a),
           heading:g.heading,elevation:g.elevation||0,index:g.index||0}));
+      } else if(stance&&stance.joints) {
+        const longGun=safe(()=>solidLongGun(c.currentWeapon)?stanceLongGunPose(c):null,null);
+        const bow=safe(()=>c.currentWeapon===WEAPONS.BOW,false),dual=safe(()=>c.currentWeapon===WEAPONS.DUAL_SMG,false);
+        const bowTension=bow?safe(()=>bowDrawAmount(c),0):0;
+        const wrist=side=>safe(()=>stancePointInBody(c,
+          longGun?(side>0?longGun.rear[0]:longGun.fore[0]):bow?(side>0?13-9*bowTension:24):side>0?(c.currentWeapon===WEAPONS.PISTOL?16:22):dual?22:27,
+          longGun?(side>0?longGun.rear[1]:longGun.fore[1]):bow?0:side>0?(c.currentWeapon===WEAPONS.PISTOL?8:11):dual?-11:1),{x:16*size,y:8*size});
+        p.arms=stance.joints.map(j=>{
+          const side=j.side,right=side>0,w=wrist(side),empty=!c.isArmed||!right&&!dual&&safe(()=>weaponHands(c.currentWeapon)!==2,true);
+          let hx=empty?j.elbow.x+5:w.x/size,hy=empty?j.elbow.y*.76:w.y/size;
+          if(!right&&stance.injury&&stance.grab>0){const knee=stance.joints[stance.injury.legIndex].knee;
+            hx+=(knee.x+1-hx)*stance.grab;hy+=(knee.y-hy)*stance.grab;}
+          const e=safe(()=>stanceArmElbow(stance,j,hx,hy),j.elbow);
+          const shoulder=local(j.shoulder.x,j.shoulder.y,chestHeight+3+air),hand=local(hx,hy,gunHeight*(empty?.7:1)+air);
+          return {side,shoulder,elbow:local(e.x,e.y,Math.min(shoulder.z,hand.z)-1.5),fist:hand,
+            handDiameter:6.3*size,widths:[R.upperW*size,(R.upperW+R.foreW)*.5*size,R.foreW*.83*size]};
+        });
       } else {
+        // Native walking elbows were deliberately authored in projection.
+        // Keep those exact XY points and reconstruct only their height: solving
+        // another IK chain here destroyed the original tucked runner's arms.
+        const swing=Math.sin(cycle)*gait.swing*motion,rest=c.isMoving?0:Math.sin(frame*.045+c.x*.01);
+        const SH=bh*.425,reach=(R.upper+R.fore)*(typeof STAND_FORE_ARM==='number'?STAND_FORE_ARM:.65);
+        const projectedScale=(typeof STAND_FORE_ARM==='number'?STAND_FORE_ARM:.65)+.16*gait.bend;
+        const PU=R.upper*projectedScale,PF=R.fore*projectedScale;
+        const disc=(q,x,y,r)=>{const dx=q.x-x,dy=q.y-y,d=Math.hypot(dx,dy);if(d>r){q.x=x+dx*r/d;q.y=y+dy*r/d;}};
         for(const side of [-1,1]) {
-          const j=stance&&stance.joints?stance.joints[side<0?0:1]:null;
-          const shoulder=j?local(j.shoulder.x,j.shoulder.y,chestHeight+5+air):rotatePoint(0,side*bh*.36,chestHeight+7+air);
-          let hx=side<0?-1.5:16,hy=side*bh*.425,handZ=gunHeight*(c.isArmed?.95:.54)+air;
-          let mount=safe(()=>stanceWeaponMount(c),{x:0,y:0,angle:0,scale:1});
-          const dual=safe(()=>c.currentWeapon===WEAPONS.DUAL_SMG,false),two=safe(()=>weaponHands(c.currentWeapon)===2,false);
-          if(c.isArmed||c.reloadTimer>0) {
-            const nativeLong=two&&safe(()=>solidLongGun(c.currentWeapon),false)?safe(()=>stanceLongGunPose(c),null):null;
-            if(nativeLong){const q=side>0?nativeLong.rear:nativeLong.fore;hx=q[0];hy=q[1];}
-            else if(two){hx=side>0?5:20;hy=side>0?6:3;}
-            else {hx=side>0||dual?16:-3;hy=side>0?8:dual?-11:-bh*.425;}
+          let sx=0,sy=side*SH,hx,hy,ex,ey;
+          if(!c.isArmed) {
+            const sw=side*swing;
+            const h={x:-1.5+gait.bend*3+sw*reach*(.44+.13*gait.band),
+              y:side*(bh*.49-gait.bend*2-Math.max(0,sw)*gait.bend*5.6+Math.max(0,-sw)*(1.1+gait.bend*.6))+rest*.4};
+            disc(h,0,sy,(PU+PF)*.98);hx=h.x;hy=h.y;
+            const e={x:(hx+1.5)*.42-gait.bend*1.6,y:side*(SH+.6+gait.bend*1.5)};
+            for(let i=0;i<2;i++){disc(e,0,sy,PU);disc(e,hx,hy,PF);}disc(e,0,sy,PU);ex=e.x;ey=e.y;
           } else {
-            const swing=Math.sin(cycle)*gait.swing*(side>0?1:-1)*motion;
-            hx=-1.5+gait.bend*3+swing*(R.upper+R.fore)*.42;hy=side*(bh*.49-gait.bend*2);
+            const two=safe(()=>weaponHands(c.currentWeapon)===2,false),long=two?safe(()=>aimedLongGunPose(c,twist,bob),null):null;
+            if(two) {
+              sx=bw*(side>0?-.08:.20);sy=bh*(side>0?.35:-.36);
+              const q=long?(side>0?long.rear:long.fore):safe(()=>c.currentWeapon===WEAPONS.BOW,false)?[side>0?13-9*safe(()=>bowDrawAmount(c),0):24,0]:[side>0?5:32,side>0?6:7];
+              hx=q[0];hy=q[1];ex=side>0?sx-1.8+(hx-sx)*.15:sx+(hx-sx)*.46;ey=side>0?bh*.44:sy+(hy-sy)*.16;
+            } else if(side>0) {
+              const pistol=safe(()=>c.currentWeapon===WEAPONS.PISTOL,false);hx=pistol?16:22;hy=pistol?8:11;
+              sx=pistol?-4:3;sy=hy;ex=sx+12;ey=(sy+hy)*.5+1;
+            } else {
+              sx=-5*(c.armDrag||0);sy=-14+3*(c.armDrag||0);hx=8-20*(c.armDrag||0);hy=sy;
+              if(safe(()=>c.currentWeapon===WEAPONS.DUAL_SMG,false)){sx=3;sy=-11;hx=22;hy=-11;}
+              ex=(sx+hx)*.5-2;ey=(sy+hy)*.5-1;
+              if(safe(()=>c.currentWeapon===WEAPONS.PISTOL,false)&&c.isMoving&&gait.band>2) {
+                const freeRun=Math.max(0,gait.band-2),sw=-Math.sin(cycle)*gait.swing;
+                const reach=(R.upper+R.fore)*(typeof STAND_FORE_ARM==='number'?STAND_FORE_ARM:.65);
+                const tx=1.5+sw*reach*(.44+.13*gait.band)*.62;
+                const ty=-(bh*.49-gait.bend*2-Math.max(0,sw)*gait.bend*3+Math.max(0,-sw)*.8);
+                const te=tx<0?tx*.63:(tx+1.5)*.42-gait.bend;
+                sx+=(-1.5-sx)*freeRun;sy+=(-bh*.425-sy)*freeRun;
+                hx+=(tx-hx)*freeRun;hy+=(ty-hy)*freeRun;
+                ex+=(te-ex)*freeRun;ey+=(-bh*.425-.6-ey)*freeRun;
+              }
+            }
           }
-          const q=rotatePoint(hx*(mount.scale||1),hy*(mount.scale||1),handZ,angle+(mount.angle||0));
-          q.x+=Math.cos(angle)*(mount.x||0)-Math.sin(angle)*(mount.y||0);q.y+=Math.sin(angle)*(mount.x||0)+Math.cos(angle)*(mount.y||0)-dive;
-          const pole=j?local(j.elbow.x,j.elbow.y,Math.min(shoulder.z,q.z)-4):rotatePoint(6,side*bh*.48,Math.min(shoulder.z,q.z)-5);
-          p.arms.push({side,shoulder,elbow:M.elbow(shoulder,q,R.upper,R.fore,pole),fist:q});
+          const toArm=(x,y,z)=>rotatePoint(x+bob,y,z,torsoHeading);
+          const shoulder=toArm(sx,sy,chestHeight+7+air),hand=toArm(hx,hy,gunHeight*(c.isArmed?1:.58)+air);
+          p.arms.push({side,shoulder,elbow:toArm(ex,ey,Math.min(shoulder.z,hand.z)-3),fist:hand,
+            handDiameter:c.isArmed?8:R.hand,widths:[R.upperW,(R.upperW+R.foreW)*.5,R.foreW*.84]});
         }
       }
-      // Reloading uses the same event clock. The support wrist visits the
-      // receiver/magazine; the firing wrist and muzzle stay on one rigid gun.
+      // Reload wrists and elbows use the same authored belt/receiver visits
+      // as reloadArm(), rather than a replacement sinusoidal animation.
       if(c.reloadTimer>0&&p.arms.length===2) {
-        const total=Number(c.reloadMax||c.reloadDuration)||90,t=clamp(1-c.reloadTimer/total);
-        const bend=Math.sin(t*Math.PI),right=p.arms[1],left=p.arms[0];
-        right.fist.z-=bend*3;left.fist=mix(left.fist,add(right.fist,rotatePoint(-4,-2,-5)),Math.sin(t*Math.PI)**2);
-        for(const arm of p.arms)arm.elbow=M.elbow(arm.shoulder,arm.fist,R.upper,R.fore,add(mix(arm.shoulder,arm.fist,.5),rotatePoint(-4,arm.side*6,-3)));
+        const progress=clamp(1-c.reloadTimer/90),arc=Math.sin(progress*Math.PI),one=safe(()=>oneHandWeapon(c.currentWeapon),false);
+        const mount=stance?safe(()=>stanceWeaponMount(c),{x:0,y:0,angle:0,scale:1}):null;
+        const map=(x,y,z)=>{
+          if(!mount)return rotatePoint(x+bob,y,z,torsoHeading);
+          const q=rotatePoint(x*(mount.scale||1),y*(mount.scale||1),z,angle+(mount.angle||0));
+          const shift=rotatePoint(mount.x||0,mount.y||0,0);q.x+=shift.x;q.y+=shift.y-dive;return q;
+        };
+        const reload=(index,sx,sy,hx,hy)=>{
+          const a=p.arms[index],right=index===1;a.shoulder=map(sx,sy,chestHeight+5+air);
+          a.fist=map(hx,hy,gunHeight*.82+air);
+          a.elbow=map(sx+(hx-sx)*.40-2.5,sy+(hy-sy)*.40+(right?2.5:-2.5),gunHeight*.72+air);
+        };
+        if(one) {
+          const pistol=safe(()=>c.currentWeapon===WEAPONS.PISTOL,false),dual=safe(()=>c.currentWeapon===WEAPONS.DUAL_SMG,false);
+          const gx=(pistol?16:22)-3*arc,gy=pistol?8:11;
+          reload(1,0,bh*.425,gx,gy);
+          if(!action) {
+            if(dual)reload(0,0,-bh*.425,gx,-gy);
+            else {
+              const phase=safe(()=>handGunReloadPhase(progress),{belt:arc,rack:0});
+              reload(0,0,-bh*.425,gx-3-(gx+2)*phase.belt-phase.rack*3,gy-2-(gy+8)*phase.belt-phase.rack*2);
+            }
+          }
+        } else if(!action)reload(0,0,-bh*.425,2+Math.sin(progress*Math.PI)*10,10);
       }
       // Ordinary unarmed punches use the existing melee phase clock too.
       if(!c.isArmed&&tool==='NONE'&&c.meleeTimer>0&&p.arms.length===2) {
@@ -172,7 +273,7 @@ function player3DPose(actor, options = {}) {
           const a=mantle?(mantle.angle||angle)+(mantle.torso||0):angle+(toolPose.torso||0);
           p.arms=[toolPose.left,toolPose.right].map((arm,i)=>{
             const side=i?1:-1,shoulder=rotatePoint(arm.sx,arm.sy,chestHeight+7+air,a),fist=rotatePoint(arm.hx,arm.hy,mantle?gunHeight+4:gunHeight,a);
-            return {side,shoulder,elbow:M.elbow(shoulder,fist,R.upper,R.fore,rotatePoint(arm.ex,arm.ey,gunHeight-5,a)),fist};
+            return {side,shoulder,elbow:rotatePoint(arm.ex,arm.ey,gunHeight-3,a),fist,widths:[R.upperW,(R.upperW+R.foreW)*.5,R.foreW*.84]};
           });
           if(digging||mantle){p.chest.x+=Math.cos(a)*(toolPose.lean||0);p.chest.y+=Math.sin(a)*(toolPose.lean||0);}
         } else {
@@ -188,7 +289,7 @@ function player3DPose(actor, options = {}) {
           const s=safe(()=>stanceSupportMount(c),{x:0,y:0,scale:1}),sc=s.scale||1,a=angle+(s.angle||0);
           const map=(x,y,z)=>{const q=rotatePoint(x*sc,y*sc,z,a);q.x+=Math.cos(angle)*(s.x||0)-Math.sin(angle)*(s.y||0);q.y+=Math.sin(angle)*(s.x||0)+Math.cos(angle)*(s.y||0)-dive;return q;};
           const arm=p.arms[0];arm.shoulder=map(native.sx,native.sy,chestHeight+7);arm.fist=map(native.hx,native.hy,gunHeight+(action===1?6:0));
-          arm.elbow=M.elbow(arm.shoulder,arm.fist,R.upper,R.fore,map(native.ex,native.ey,gunHeight-4));
+          arm.elbow=map(native.ex,native.ey,gunHeight-3);
         }
       }
       if(c.mounted)for(const leg of p.legs){leg.knee.z+=3;leg.ankle.z+=2;}
@@ -225,53 +326,98 @@ function player3DPose(actor, options = {}) {
   if(!p||!p.head||!p.chest||!p.pelvis)return null;
   const widthScale=Number(options.widthScale)>0?Number(options.widthScale):1;
   const parts=[],sockets={head:point(p.head.x,p.head.y,p.head.z),chest:point(p.chest.x,p.chest.y,p.chest.z),pelvis:point(p.pelvis.x,p.pelvis.y,p.pelvis.z)};
-  const forward=p.forward||rotatePoint(1,0,0),up=p.up||M.norm(sub(p.head,p.pelvis)),basis=M.frame(up,forward);
+  const forward=p.forward||rotatePoint(1,0,0),up=p.up||M.norm(sub(p.head,p.pelvis));
+  const nativeFrames=Number.isFinite(p.chestHeading),pitch=Number(p.bodyPitch)||0;
+  const basis=nativeFrames?M.postureFrame(p.chestHeading,pitch):M.frame(up,forward);
+  const hipBasis=nativeFrames?M.postureFrame(p.hipHeading,pitch):basis;
+  const headBasis=nativeFrames?M.postureFrame(p.chestHeading,pitch):basis;
   const include=options.includeParts||options.partMask,exclude=options.excludeParts||options.omitParts;
   const selected=name=>(!include||include.includes(name)||include.includes(name.split('_').slice(0,-1).join('_')))&&(!exclude||!exclude.includes(name));
   const hitFlash=Number(c.hitFlash)>0||(kind==='BOXING'&&Number(c._boxing&&c._boxing.hitFlashMs)>0);
   const flashColor=kind==='BOXING'?[242,217,160]:[255,255,255];
   const addPart=(mesh,color,matrix,part)=>{
     if(!selected(part))return;
-    const flash=hitFlash&&['torso','vest','coat','upper_arm','forearm'].includes(mesh);
+    const flash=hitFlash&&['torso','vest','coat','upper_arm','forearm','joint'].includes(mesh);
     parts.push({mesh,color:options.skeleton?[240,244,238]:flash?flashColor:color,matrix,part});
   };
   const oval=(mesh,pos,sx,sy,sz,color,tag,axes=basis)=>addPart(mesh,color,M.matrix(pos,axes.x,axes.y,axes.z,sx,sy,sz),tag);
   const bone=(mesh,a,b,width,color,tag,depth=width)=>addPart(mesh,color,M.segment(a,b,(options.skeleton?width*.32:width)*widthScale,(options.skeleton?depth*.32:depth)*widthScale),tag);
+  const assetMeshes=typeof PLAYER3D_ASSET!=='undefined'?PLAYER3D_ASSET.meshes:null;
+  // The original painter owns the visible footprint. Keep the model's real
+  // height and rotation, but calibrate its projected native axes to that exact
+  // authored silhouette instead of deriving chest proportions from head/hips.
+  const fittedOval=(mesh,pos,length,width,depth,color,tag,axes,heading)=>{
+    const raw=M.matrix(pos,axes.x,axes.y,axes.z,length*.5,width*.5,depth);
+    const vertices=assetMeshes&&assetMeshes[mesh]&&assetMeshes[mesh].positions;
+    const co=Math.cos(heading),si=Math.sin(heading);
+    let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity;
+    const scan=(vx,vy,vz)=>{
+      const x=raw[0]*vx+raw[4]*vy+raw[8]*vz,y=raw[1]*vx+raw[5]*vy+raw[9]*vz;
+      const q=x*co+y*si,r=-x*si+y*co;x0=Math.min(x0,q);x1=Math.max(x1,q);y0=Math.min(y0,r);y1=Math.max(y1,r);
+    };
+    if(vertices)for(let i=0;i<vertices.length;i+=3)scan(vertices[i],vertices[i+1],vertices[i+2]);
+    else for(const x of [-1,1])for(const y of [-1,1])for(const z of [-1,1])scan(x,y,z);
+    const sx=length/Math.max(.001,x1-x0),sy=width/Math.max(.001,y1-y0);
+    for(const column of [0,4,8]) {
+      const x=raw[column],y=raw[column+1],q=(x*co+y*si)*sx,r=(-x*si+y*co)*sy;
+      raw[column]=co*q-si*r;raw[column+1]=si*q+co*r;
+    }
+    const dx=(x0+x1)*.5*sx,dy=(y0+y1)*.5*sy;
+    raw[12]-=co*dx-si*dy;raw[13]-=si*dx+co*dy;
+    addPart(mesh,color,raw,tag);return raw;
+  };
   const torsoDepth=Number(p.torsoDepth)||bw*.42,torsoWidth=Number(p.torsoWidth)||bh*.47;
   const torsoLength=Number(p.torsoLength)||Math.max(8,Math.hypot(p.head.x-p.pelvis.x,p.head.y-p.pelvis.y,p.head.z-p.pelvis.z)*.48);
-  oval('pelvis',p.pelvis,torsoDepth*.85,torsoWidth*.69,4.5,palette.pants,'pelvis');
-  oval('torso',p.chest,torsoDepth,torsoWidth,torsoLength,palette.shirt,'torso');
-  const neck=mix(p.chest,p.head,.68);bone('forearm',neck,p.head,5.7,palette.skin,'neck');
-  oval('head',p.head,Number(p.headRadius)||6.3,Number(p.headRadius)||6.5,7.0,palette.skin,'head');
+  if(nativeFrames) {
+    fittedOval('pelvis',p.pelvis,11+floor*2,bh*.61*(1-(stance&&stance.roll?stance.roll.side*.5:0)),4.5,palette.pants,'pelvis',hipBasis,p.hipHeading);
+    fittedOval('torso',p.chest,p.torsoProjectedLength,p.torsoProjectedWidth,torsoLength,palette.shirt,'torso',basis,p.chestHeading);
+  } else {
+    oval('pelvis',p.pelvis,torsoDepth*.85,torsoWidth*.69,4.5,palette.pants,'pelvis',hipBasis);
+    oval('torso',p.chest,torsoDepth,torsoWidth,torsoLength,palette.shirt,'torso');
+  }
+  const neck=mix(p.chest,p.head,.68);bone('forearm',neck,p.head,4.8,palette.skin,'neck');
+  if(nativeFrames)fittedOval('head',p.head,p.headProjectedDiameter,p.headProjectedDiameter,6.3,palette.skin,'head',headBasis,p.chestHeading);
+  else oval('head',p.head,Number(p.headRadius)||5.5,Number(p.headRadius)||5.5,6.3,palette.skin,'head',headBasis);
   const arms=p.arms||[],legs=p.legs||[];
   arms.forEach((arm,i)=>{
     const side=arm.side===-1||arm.side===1?arm.side:i?1:-1,tag=side<0?'left':'right';
     const shoulder=arm.shoulder,elbow=arm.elbow,hand=arm.fist||arm.hand;
     if(!shoulder||!elbow||!hand)return;
     sockets[tag+'Shoulder']=point(shoulder.x,shoulder.y,shoulder.z);sockets[tag+'Elbow']=point(elbow.x,elbow.y,elbow.z);sockets[tag+'Hand']=point(hand.x,hand.y,hand.z);sockets[tag+'Fist']=sockets[tag+'Hand'];
-    bone('upper_arm',shoulder,elbow,R.upperW,palette.shirt,'upper_arm_'+tag);
-    bone('forearm',elbow,hand,R.foreW,palette.shirt,'forearm_'+tag);
-    oval('hand',hand,R.hand*.43*widthScale,R.hand*.43*widthScale,R.hand*.42*widthScale,chemist&&side<0?[177,184,194]:palette.skin,'hand_'+tag);
+    bone('upper_arm',shoulder,elbow,arm.widths?arm.widths[0]:R.upperW,palette.shirt,'upper_arm_'+tag);
+    bone('forearm',elbow,hand,R.foreW*(arm.widths?arm.widths[0]/R.upperW:1),palette.shirt,'forearm_'+tag);
+    if(assetMeshes&&assetMeshes.joint&&!options.skeleton)oval('joint',elbow,(arm.widths?arm.widths[1]:(R.upperW+R.foreW)*.5)*.5*widthScale,(arm.widths?arm.widths[1]:(R.upperW+R.foreW)*.5)*.5*widthScale,(arm.widths?arm.widths[1]:(R.upperW+R.foreW)*.5)*.5*widthScale,palette.shirt,'upper_arm_'+tag,M.postureFrame(0));
+    if(nativeFrames)fittedOval('hand',hand,(arm.handDiameter||R.hand)*widthScale,(arm.handDiameter||R.hand)*widthScale,R.hand*.42*widthScale,chemist&&side<0?[177,184,194]:palette.skin,'hand_'+tag,M.postureFrame(p.chestHeading),p.chestHeading);
+    else oval('hand',hand,R.hand*.43*widthScale,R.hand*.43*widthScale,R.hand*.42*widthScale,chemist&&side<0?[177,184,194]:palette.skin,'hand_'+tag);
   });
   legs.forEach((leg,i)=>{
     const tag=i?'right':'left';if(!leg.hip||!leg.knee||!leg.ankle)return;
     sockets[tag+'Hip']=point(leg.hip.x,leg.hip.y,leg.hip.z);sockets[tag+'Knee']=point(leg.knee.x,leg.knee.y,leg.knee.z);sockets[tag+'Ankle']=point(leg.ankle.x,leg.ankle.y,leg.ankle.z);
     bone('thigh',leg.hip,leg.knee,R.thighW,palette.pants,'thigh_'+tag);
     bone('shin',leg.knee,leg.ankle,R.shinW,palette.pants,'shin_'+tag);
-    const direction=Number.isFinite(leg.heading)?leg.heading:angle,toe=add(leg.ankle,rotatePoint(R.foot*.62*widthScale,0,.2,direction));
-    bone('foot',leg.ankle,toe,R.shinW*.82,palette.boot,'foot_'+tag,R.shinW*.7);
-    sockets[tag+'Foot']=toe;
+    const direction=Number.isFinite(leg.heading)?leg.heading:angle;
+    if(nativeFrames) {
+      const scale=leg.widths?leg.widths[1]/R.shinW:1;
+      const center=add(leg.ankle,rotatePoint((stance?1.5*scale:R.foot*.34)*widthScale,0,.2,direction));
+      fittedOval('foot',center,R.foot*scale*widthScale,R.shinW*(stance?.82:.80)*scale*widthScale,R.shinW*.45*widthScale,palette.boot,'foot_'+tag,M.postureFrame(direction),direction);
+      sockets[tag+'Foot']=center;
+    } else {
+      const toe=add(leg.ankle,rotatePoint(R.foot*.62*widthScale,0,.2,direction));
+      bone('foot',leg.ankle,toe,R.shinW*.82,palette.boot,'foot_'+tag,R.shinW*.7);sockets[tag+'Foot']=toe;
+    }
   });
   if(!options.skeleton) {
     if(armored){oval('vest',p.chest,torsoDepth*1.06,torsoWidth*1.04,torsoLength*1.03,[91,104,76],'armor');oval('helmet',p.head,7.1,7.3,7.5,[74,85,74],'helmet');oval('visor',add(p.head,mul(forward,1)),6.7,6.9,7.5,[84,110,124],'headwear');}
-    else if(chemist)oval('coat',p.chest,torsoDepth*1.02,torsoWidth*1.02,torsoLength*1.07,palette.shirt,'coat');
+    else if(chemist){if(nativeFrames)fittedOval('coat',p.chest,p.torsoProjectedLength,p.torsoProjectedWidth,torsoLength,palette.shirt,'coat',basis,p.chestHeading);else oval('coat',p.chest,torsoDepth*1.02,torsoWidth*1.02,torsoLength*1.07,palette.shirt,'coat');}
     else if(ninja)oval('hood',p.head,6.6,6.8,7.4,[22,23,30],'headwear');
     else if(cowboy)oval('cowboy_hat',add(p.head,mul(basis.z,4)),6.2,6.5,4.5,[108,80,46],'headwear');
     else {
       const hat=safe(()=>headwearOf(identity),null);
       if(hat)oval(hat==='STETSON'?'cowboy_hat':hat==='HOOD'?'hood':'helmet',add(p.head,mul(basis.z,2)),hat==='STETSON'?6.2:7.1,hat==='STETSON'?6.5:7.3,hat==='STETSON'?4.5:7.5,[75,86,80],'headwear');
     }
-    if(identity.jetpack)oval('jetpack',add(p.chest,mul(forward,-torsoDepth*.82)),14,17,14,[87,94,104],'jetpack');
+    if(identity.jetpack){const packCenter=add(p.chest,mul(forward,-bw*(typeof TORSO_DEPTH==='number'?TORSO_DEPTH:.84)*.5-.5));
+      if(nativeFrames)fittedOval('jetpack',packCenter,12,24,6.5,[87,94,104],'jetpack',basis,p.chestHeading);
+      else oval('jetpack',add(p.chest,mul(forward,-torsoDepth*.82)),14,17,14,[87,94,104],'jetpack');}
   }
   // Socket positions are actor-local, never absolute world coordinates. The
   // forward muzzle vertices of exported weapons are anchored at these exact
@@ -353,7 +499,7 @@ function player3DPose(actor, options = {}) {
   }
   let minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
   for(const part of parts) {
-    const a=part.matrix,unit=['head','hand','torso','pelvis','helmet','hood','cowboy_hat','vest','coat','jetpack','visor','grenade','flask'].includes(part.mesh)?1:.5;
+    const a=part.matrix,unit=['head','hand','torso','pelvis','helmet','hood','cowboy_hat','vest','coat','jetpack','visor','grenade','flask','joint'].includes(part.mesh)?1:.5;
     const rx=(Math.abs(a[0])+Math.abs(a[4])+Math.abs(a[8]))*unit+1.5,ry=(Math.abs(a[1])+Math.abs(a[5])+Math.abs(a[9]))*unit+1.5;
     minx=Math.min(minx,a[12]-rx);maxx=Math.max(maxx,a[12]+rx);miny=Math.min(miny,a[13]-ry);maxy=Math.max(maxy,a[13]+ry);
   }

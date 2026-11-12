@@ -34,6 +34,22 @@ MATERIALS = {}
 LIBRARY = {}
 SOURCE = []
 SOCKETS = {}
+NATIVE_WEAPONS = {}
+
+
+def load_native_weapons():
+    """The game's own authored solids are the long-gun model source."""
+    path=ROOT/'assets/player/native-weapons.json'
+    if not path.exists():
+        raise RuntimeError('Run node tools/extract-player3d-weapons.cjs before building the Blender player')
+    data=json.loads(path.read_text())
+    if data.get('schemaVersion')!=1:
+        raise RuntimeError('Unsupported native weapon source schema')
+    NATIVE_WEAPONS.update(data['models'])
+    for model in NATIVE_WEAPONS.values():
+        for item in model['boxes']+model['details']:
+            rgb=item['color']
+            PALETTE['native_rgb_'+''.join(f'{int(c):02x}' for c in rgb)]=[c/255 for c in rgb]
 
 
 class Geometry:
@@ -154,9 +170,17 @@ def make_library(collection):
     geometries['torso']=Geometry().loft([(-1,.60,.60),(-.65,.85,.76),(.25,1,.90),(.72,.91,.76),(1,.60,.50)],'shirt','Z',16)
     geometries['pelvis']=Geometry().sphere(scale=(.84,1,.67),material='pants')
     geometries['hand']=Geometry().sphere(scale=(1,.78,.61))
+    # Plain seam-fill mass. It has the same unit-radius convention as head
+    # and hand, but no facial geometry or baked taper. The runtime sizes it
+    # to each native joint's actual diameter instead of inventing a new build.
+    geometries['joint']=Geometry().sphere(material='shirt')
     for name,material,radii in [
-        ('upper_arm','shirt',[( -.5,.33,.33),(-.32,.50,.50),(.25,.43,.43),(.5,.34,.34)]),
-        ('forearm','shirt',[(-.5,.36,.36),(-.28,.44,.44),(.32,.33,.33),(.5,.29,.29)]),
+        # Native sleeves are a continuous shoulder/elbow/wrist ribbon. With
+        # upperW:foreW=1:.8, both meshes meet at elbowW=.9*upperW=1.125*foreW.
+        # Old capped bicep profiles narrowed to .34/.36 here and visibly lost
+        # the broad, continuous native elbow even when their maxima matched.
+        ('upper_arm','shirt',[(-.5,.50,.50),(-.25,.4875,.4875),(.25,.4625,.4625),(.5,.45,.45)]),
+        ('forearm','shirt',[(-.5,.5625,.5625),(-.25,.546875,.546875),(.25,.515625,.515625),(.5,.50,.50)]),
         ('thigh','pants',[(-.5,.40,.40),(-.28,.52,.52),(.20,.46,.44),(.5,.34,.34)]),
         ('shin','pants',[(-.5,.34,.34),(-.27,.43,.43),(.26,.32,.31),(.5,.27,.27)])]:
         geometries[name]=Geometry().loft(radii,material,sides=12)
@@ -214,7 +238,19 @@ def make_library(collection):
             g.box((.35,0,.135),(.035,.035,.05),'ink')
         return g
     for name in ['pistol','revolver','smg','rifle','shotgun','coach_gun','rocket','bow','taser','particle_beam']:
-        geometries[name]=gun(name,name)
+        if name in NATIVE_WEAPONS:
+            model=NATIVE_WEAPONS[name];geometry=Geometry()
+            for box in model['boxes']:
+                x0,x1,y0,y1,z0,z1=box['bounds']
+                material='native_rgb_'+''.join(f'{int(c):02x}' for c in box['color'])
+                geometry.box(((x0+x1)*.5,(y0+y1)*.5,(z0+z1)*.5),
+                             (x1-x0,y1-y0,z1-z0),material,bevel=.025)
+            for line in model['details']:
+                if (Vector(line['b'])-Vector(line['a'])).length<1e-8:continue
+                material='native_rgb_'+''.join(f'{int(c):02x}' for c in line['color'])
+                geometry.rod(line['a'],line['b'],line['width']*.5,material,8)
+            geometries[name]=geometry
+        else:geometries[name]=gun(name,name)
     geometries['sword']=Geometry().box((-.33,0,0),(.30,.065,.07),'wood').box((-.16,0,0),(.06,.34,.07),'gold').loft([(-.13,.045,.025),(.38,.040,.025),(.5,.001,.001)],'steel',sides=4,smooth=False)
     geometries['pickaxe']=Geometry().rod((-.5,0,0),(.42,0,0),.035,'wood').rod((.36,-.30,0),(.46,0,.04),.045,'steel').rod((.46,0,.04),(.34,.36,0),.045,'steel')
     geometries['shovel']=Geometry().rod((-.5,0,0),(.27,0,0),.028,'wood').box((.36,0,0),(.28,.25,.045),'steel').box((-.46,0,0),(.05,.20,.05),'metal')
@@ -228,8 +264,13 @@ def make_library(collection):
         if name in weapons:
             lo=min(v[0] for v in geometry.vertices);hi=max(v[0] for v in geometry.vertices)
             span=hi-lo;center=(hi+lo)*.5
-            grip_x={'bow':0,'sword':-.33,'pickaxe':-.25,'shovel':-.25,'cannon':-.35,'rocket':-.04,'revolver':-.29}.get(name,-.17 if name in ['pistol','smg','taser'] else -.10)
-            SOCKETS[name]={'grip':[round((grip_x-center)/span,6),0,0],'muzzle':[.5,0,0]}
+            if name in NATIVE_WEAPONS:
+                spec=NATIVE_WEAPONS[name]
+                normalized=lambda p:[round((p[0]-center)/span,6),round(p[1]/span,6),round(p[2]/span,6)]
+                SOCKETS[name]={'grip':normalized(spec['grip']),'muzzle':normalized(spec['muzzle'])}
+            else:
+                grip_x={'bow':0,'sword':-.33,'pickaxe':-.25,'shovel':-.25,'cannon':-.35,'rocket':-.04,'revolver':-.29}.get(name,-.17 if name in ['pistol','smg','taser'] else -.10)
+                SOCKETS[name]={'grip':[round((grip_x-center)/span,6),0,0],'muzzle':[.5,0,0]}
             geometry.vertices=[((x-center)/span,y/span,z/span) for x,y,z in geometry.vertices]
         obj=mesh_object(name,geometry,collection);obj.hide_render=True;obj.hide_viewport=True
         obj['runtimeSockets']=json.dumps(SOCKETS.get(name,{}))
@@ -274,10 +315,16 @@ def assemble(body_collection,equipment_collection):
     source_part('Trousers pelvis','pelvis',(-.015,0,.93),(.17,.20,.16),bone='pelvis',collection=body_collection)
     source_part('Bald head','head',(.015,0,1.66),(.145,.14,.17),bone='head',collection=body_collection)
     for side,sign in [('L',1),('R',-1)]:
-        for semantic,width in [('upper_arm',.23),('forearm',.18),('thigh',.28),('shin',.22)]:
+        for semantic,width in [('upper_arm',.23),('forearm',.184),('thigh',.28),('shin',.22)]:
             definition=next(b for b in bone_defs if b[0]==f'{semantic}.{side}')
             a,b=Vector(definition[1]),Vector(definition[2])
             source_part(f'{semantic}.{side}',semantic,(a+b)*.5,((b-a).length,width,width),b-a,f'{semantic}.{side}',collection=body_collection)
+        shoulder=next(b for b in bone_defs if b[0]==f'upper_arm.{side}')[1]
+        elbow=next(b for b in bone_defs if b[0]==f'forearm.{side}')[1]
+        source_part(f'Sleeve shoulder.{side}','joint',shoulder,(.115,.115,.115),
+                    bone=f'upper_arm.{side}',collection=body_collection)
+        source_part(f'Sleeve elbow.{side}','joint',elbow,(.1035,.1035,.1035),
+                    bone=f'forearm.{side}',collection=body_collection)
         source_part(f'hand.{side}','hand',(.075,sign*.40,.765),(.07,.057,.072),bone=f'hand.{side}',collection=body_collection)
         source_part(f'boot.{side}','foot',(.075,sign*.12,.07),(.32,.34,.30),bone=f'foot.{side}',collection=body_collection)
     for name,semantic,center,scale,bone in [
@@ -297,6 +344,12 @@ def assemble(body_collection,equipment_collection):
         group=obj.vertex_groups.new(name=obj['bone']);group.add(list(range(len(obj.data.vertices))),1.0,'REPLACE')
         modifier=obj.modifiers.new('Player skin','ARMATURE');modifier.object=rig
         obj.parent=rig
+        # Seam-fill masses are the sleeve interior, not separate cuff rings.
+        # Their shell ink would intersect the adjoining sleeve shells in
+        # Blender even though all three pieces share one material contour.
+        if obj['semantic']=='joint':
+            obj['outlineWidth']=0
+            continue
         # Outline material uses an inverted hull in EEVEE, not a painted image.
         if not obj.data.materials or obj.data.materials[-1]!=MATERIALS['ink']:
             obj.data.materials.append(MATERIALS['ink'])
@@ -341,7 +394,7 @@ def export_compact():
         meshes[name]={'positions':positions,'normals':normals,'indices':indices,'material':groups[0]['material'],'materialGroups':groups}
         meshes[name].update(json.loads(obj.get('runtimeSockets','{}')))
     result={'schemaVersion':1,'axis':'+X forward, +Y lateral, +Z up',
-            'normalization':'limbs x=-0.5..0.5; head/torso/pelvis/hand unit radius; weapons authored around their grip',
+            'normalization':'limbs x=-0.5..0.5; head/torso/pelvis/hand/joint unit radius; weapons authored around their grip',
             'palette':{name:[round(c,6) for c in rgb] for name,rgb in PALETTE.items()},'toon':{'thresholds':[.38,.70],'bands':[.44,.76,1.0]},'meshes':meshes}
     validate(result)
     (OUT/'player-mesh.json').write_text(json.dumps(result,separators=(',',':'))+'\n')
@@ -349,7 +402,7 @@ def export_compact():
 
 
 def validate(data):
-    required={'head','torso','pelvis','upper_arm','forearm','hand','thigh','shin','foot','helmet','hood','cowboy_hat','vest','coat','jetpack','pistol','revolver','smg','rifle','shotgun','rocket','bow','sword','pickaxe','shovel','cannon'}
+    required={'head','torso','pelvis','upper_arm','forearm','hand','joint','thigh','shin','foot','helmet','hood','cowboy_hat','vest','coat','jetpack','pistol','revolver','smg','rifle','shotgun','rocket','bow','sword','pickaxe','shovel','cannon'}
     assert data['schemaVersion']==1 and required<=data['meshes'].keys()
     for name,mesh in data['meshes'].items():
         p,n,ix=mesh['positions'],mesh['normals'],mesh['indices']
@@ -364,6 +417,7 @@ def validate(data):
             assert (b-a).cross(c-a).length>1e-10,(name,i,'degenerate triangle')
     base=['head','torso','pelvis','upper_arm','forearm','hand','thigh','shin','foot']
     triangles=sum(len(data['meshes'][name]['indices'])//3*(2 if name in ['upper_arm','forearm','hand','thigh','shin','foot'] else 1) for name in base)
+    triangles+=4*len(data['meshes']['joint']['indices'])//3
     assert triangles<10000,triangles
     print('PLAYER_MESH_VALID',len(data['meshes']),'semantic meshes,',triangles,'base triangles')
 
@@ -475,6 +529,7 @@ def main():
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     if args.validate_only:
         validate(json.loads((OUT/'player-mesh.json').read_text()));return
+    load_native_weapons()
     OUT.mkdir(parents=True,exist_ok=True)
     bpy.context.preferences.filepaths.save_version=0
     if args.export_existing:

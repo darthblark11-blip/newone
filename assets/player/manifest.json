@@ -9,7 +9,7 @@
     "player-back.png",
     "player-overhead.png"
   ],
-  "meshCount": 34,
+  "meshCount": 35,
   "boneCount": 18,
   "runtimeMaterial": "Three-band world-lit shader; glTF retains palette and toon metadata, not Blender node execution."
 }

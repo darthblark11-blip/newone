@@ -85,26 +85,27 @@
       "mesh": true
     }
   ],
-  "graphicsPixels": 1543,
+  "graphicsPixels": 1535,
   "gpuError": 0,
   "stats": {
     "enabled": true,
     "ready": true,
     "failure": "",
     "generation": 1,
-    "width": 256,
+    "width": 128,
     "height": 128,
     "draws": 48,
-    "meshUploads": 34,
-    "triangles": 6730,
-    "gpuDrawCalls": 950,
+    "meshUploads": 35,
+    "triangles": 8058,
+    "gpuDrawCalls": 1026,
     "contextLosses": 0,
     "contextRestores": 0,
-    "resizes": 2,
+    "resizes": 1,
     "failures": 0,
-    "bufferCreates": 102,
+    "bufferCreates": 105,
     "programCreates": 1,
-    "lastDrawMs": 0.30000000004656613,
-    "totalDrawMs": 149.80000000167638
+    "stainDraws": 0,
+    "lastDrawMs": 0.40000000037252903,
+    "totalDrawMs": 30.90000000037253
   }
 }

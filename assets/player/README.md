@@ -16,8 +16,16 @@ actual three-band material; Blender's Shader-to-RGB nodes are not a glTF feature
 From the repository root:
 
 ```sh
+node tools/extract-player3d-weapons.cjs
 blender --background --factory-startup --python tools/blender-player.py
 ```
+
+The assault rifle, shotgun and particle beam meshes come directly from the
+game's authored `drawLongGunSolid` boxes, detail lines, colors and sockets in
+`native-weapons.json`. Refresh that source with the extraction command when
+the native weapon art changes. Both the grip and muzzle are transformed into
+the exported mesh coordinates, retaining the original buttstock and barrel
+dimensions instead of estimating them from a second weapon model.
 
 Add `-- --skip-renders` to rebuild models and data without rendering the previews.
 Validation runs during export. To validate an existing runtime asset:
@@ -51,10 +59,14 @@ thresholds/bands and a `meshes` dictionary. Each semantic mesh contains flat XYZ
 `materialGroups: [{start, count, material}]`. Group offsets and counts address the
 index array. Weapon meshes also contain local `grip` and `muzzle` sockets.
 
-Coordinates are +X forward, +Y lateral and +Z up. Limb meshes span X -0.5 to +0.5
-with approximately 0.5 radial extent. Head, torso, pelvis and hand meshes have unit
-radius. Weapons span X -0.5 to +0.5. The bow includes its real nocked arrow, so its
+Coordinates are +X forward, +Y lateral and +Z up. Limb meshes span X -0.5 to +0.5.
+Sleeve profiles follow the native shoulder/elbow/wrist taper: the upper arm has
+radial extent 0.5 at the shoulder and 0.45 at the elbow; the forearm has 0.5625
+at the elbow and 0.5 at the wrist. Applying the native upper/forearm widths (1:0.8)
+makes both sides of the elbow meet at the same diameter. The plain `joint` sphere
+fills shoulder and elbow seams at that same native joint size. Head, torso,
+pelvis, hand and joint meshes use unit radius. Weapons span X -0.5 to +0.5. The bow includes its real nocked arrow, so its
 muzzle is the arrow tip and its width remains proportional when aligned in game.
 Severed parts can use `cap` and `torso_cap` meshes for closed cut surfaces.
 
-The default assembled body is 2,836 triangles before its silhouette outline.
+The default assembled body is 3,988 triangles before its silhouette outline.

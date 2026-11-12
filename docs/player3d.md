@@ -34,6 +34,16 @@ XY uses the existing actor-local world axes; Z is height. Native gameplay
 queries remain the reference for weapon origins and contact positions. A
 renderer call never updates the simulation.
 
+Standing, crouched, and prone mesh landmarks and projected proportions follow
+the original painter. Chest and pelvis retain independent native headings;
+authored elbows are preserved. Prone legs come from the stance joints, and
+stopping retains the native easing clock. Copy `gaitPose()` scalar values before
+calling other pose helpers: it returns shared scratch data.
+
+The rifle, shotgun, and particle accelerator use the original game's authored
+solids and grip/muzzle coordinates. `node tools/extract-player3d-weapons.cjs`
+updates their Blender input when the native weapon art changes.
+
 `Player3D.draw(snapshot, context, options)` immediately copies a transparent,
 depth-tested mesh render into the supplied 2D context. Its current transform,
 alpha, and clip apply, including rebased `p5.Graphics` corpse caches and pinned
@@ -60,8 +70,17 @@ draws, mesh uploads, GPU resource creation, and context restoration counts.
 node tools/check-player3d.js
 node tools/check-player3d-dispatch.js
 node tools/check-player3d-corpses.js
+node tools/check-player3d-fidelity.js
 node tools/check-player3d-browser.cjs
+node tools/visual-player3d-fidelity.cjs
 ```
+
+The fidelity suite traces the original painter's real transforms and anatomy,
+then compares mesh joints, visible widths, head/body/hand/boot proportions,
+independent headings, prone orientation, and stop easing. The visual tool writes
+matched original-2D / first-3D / revised-3D images and an original-versus-revised
+motion clip with turning and stance transitions. Set `PLAYER3D_FIDELITY_OUT` to
+select its output directory or `PLAYER3D_FIDELITY_VIDEO=0` to skip video.
 
 The browser check uses locally installed p5, Chromium, and Playwright. Set
 `PLAYER3D_P5` or `VIS_CHROME` for other installations, and `PLAYER3D_OUT` to change

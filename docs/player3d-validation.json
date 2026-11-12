@@ -1,13 +1,13 @@
 {
   "ready": true,
   "drawn": true,
-  "opaque": 11424,
+  "opaque": 13705,
   "woundVisible": true,
   "flashVisible": true,
   "outsideClip": 0,
-  "insideClip": 4491,
+  "insideClip": 3948,
   "graphicsDrawn": true,
-  "graphicsPixels": 3208,
+  "graphicsPixels": 3749,
   "cases": [
     {
       "name": "Pistol",
@@ -77,28 +77,28 @@
   "fallback": true,
   "gpuError": 0,
   "independent": true,
-  "uploadsBefore": 34,
-  "uploadsAfter": 34,
+  "uploadsBefore": 35,
+  "uploadsAfter": 35,
   "stats": {
     "draws": 68,
-    "meshUploads": 34,
-    "triangles": 6730,
-    "gpuDrawCalls": 2604,
+    "meshUploads": 35,
+    "triangles": 8058,
+    "gpuDrawCalls": 2895,
     "contextLosses": 0,
     "contextRestores": 0,
     "resizes": 1,
     "failures": 0,
-    "bufferCreates": 102,
+    "bufferCreates": 105,
     "programCreates": 1,
     "stainDraws": 1,
-    "lastDrawMs": 0.20000000018626451,
-    "totalDrawMs": 48.49999999976717
+    "lastDrawMs": 0.09999999962747097,
+    "totalDrawMs": 145.80000000353903
   },
   "cpuMs": {
-    "median": 0.30000000004656613,
-    "p95": 1.1999999999534339
+    "median": 0.5,
+    "p95": 6.7000000001862645
   },
-  "sourceBytes": 4980158,
+  "sourceBytes": 5209184,
   "world": {
     "meshDraws": 3,
     "mesh": {
@@ -109,18 +109,18 @@
       "width": 128,
       "height": 128,
       "draws": 3,
-      "meshUploads": 34,
-      "triangles": 6730,
-      "gpuDrawCalls": 129,
+      "meshUploads": 35,
+      "triangles": 8058,
+      "gpuDrawCalls": 141,
       "contextLosses": 0,
       "contextRestores": 0,
-      "resizes": 2,
+      "resizes": 1,
       "failures": 0,
-      "bufferCreates": 102,
+      "bufferCreates": 105,
       "programCreates": 1,
       "stainDraws": 0,
-      "lastDrawMs": 0.19999999995343387,
-      "totalDrawMs": 172.10000000009313
+      "lastDrawMs": 0.20000000018626451,
+      "totalDrawMs": 5.099999999627471
     },
     "fault": null,
     "worldLighting": {
@@ -135,9 +135,10 @@
     "restored": true
   },
   "nodeChecks": {
-    "assetsAndPose": 319,
+    "assetsAndPose": 324,
     "livingDispatch": 51,
-    "corpseAdapter": 77
+    "corpseAdapter": 77,
+    "nativePoseFidelity": 6869
   },
   "existingChecksPassed": [
     "check-stance-hits.js (142)",

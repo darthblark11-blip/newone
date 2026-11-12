@@ -1,0 +1,31 @@
+{
+  "reference": "Original native Canvas player painter, traced at its actual rendering transforms",
+  "previous3DCommit": "b81a4b2",
+  "before": {
+    "checks": 6869,
+    "poses": 153,
+    "failures": 3285,
+    "maxPointError": 46.79139280101771,
+    "maxHeadingError": 0.1415655129802349
+  },
+  "after": {
+    "checks": 6869,
+    "poses": 153,
+    "failures": 0,
+    "maxPointError": 0.022643554486614884,
+    "maxHeadingError": 2.782493502273553e-08
+  },
+  "simulationFixturesIdentical": true,
+  "scenarios": [
+    "independent torso and hip turning",
+    "carry, half presentation, aimed and uncached weapon poses",
+    "original sleeve widths and authored shoulder/elbow/wrist locations",
+    "head, body, palm and boot proportions",
+    "crouch and prone in four directions",
+    "planted hips during same-frame aim changes",
+    "forward and backward stop easing"
+  ],
+  "comparison": "previews/player3d-fidelity.png",
+  "synchronizedNativeVs3DVideo": "previews/player3d-native-vs-3d.mp4",
+  "physicalPhonePerformanceMeasured": false
+}
