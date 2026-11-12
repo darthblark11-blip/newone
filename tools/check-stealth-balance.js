@@ -108,13 +108,16 @@ ok("qaFar.stealthPerception.goalX===300&&qaFar.stealthPerception.goalY===0&&qaFa
 scene(300, 0);
 P(`var qaPeer=new Character(-3000,1800,false,'NORMAL');qaPeer.fireTimer=999999;qaPeer.aimAngle=Math.PI;
   enemiesList.push(qaPeer);`);tick();
-tick(30, 100, '[qaGuard,qaPeer]');
+tick(160, 100, '[qaGuard,qaPeer]');
 ok("qaState.visible&&qaState.phase==='ALERT'&&qaPeer.stealthPerception.phase==='ALERT'&&!qaPeer.stealthPerception.visible",
   'The group stays in combat beyond the loss timer while a spotter still genuinely sees the player');
 P('player.x=350;');tick(1, 100, '[qaGuard,qaPeer]');
 ok('qaPeer.stealthPerception.goalX===350&&qaPeer.stealthPerception.goalY===0&&!qaPeer.stealthPerception.visible',
   'A still-seeing spotter shares a newly confirmed position with a distant peer');
-P('player.x=9000;player.y=-9000;');tick(26, 100, '[qaGuard,qaPeer]');
+P('player.x=9000;player.y=-9000;');tick(30, 100, '[qaGuard,qaPeer]');
+ok("qaState.phase==='ALERT'&&qaPeer.stealthPerception.phase==='ALERT'&&!qaState.visible&&!qaPeer.stealthPerception.visible",
+  'A brief loss of sight keeps both original spotter and distant teammate in the same fight');
+tick(130, 100, '[qaGuard,qaPeer]');
 ok("qaState.phase==='SEARCH'&&qaPeer.stealthPerception.phase==='SEARCH'",
   'Both spotter and alerted peer return to search after the whole group loses contact');
 
@@ -135,8 +138,103 @@ P(`var qaRoster=[qaGuard];for(var i=1;i<40;i++){
   for(var i=0;i<6;i++){frameCount++;deltaTime=100;for(const e of qaRoster)stealthUpdateEnemy(e);}`);
 ok('qaRoster.every(e=>e.stealthPerception.phase===\'ALERT\')&&qaInitialReads<=qaRoster.length*2',
   'Forty simultaneous spotters create at most a linear initial combat broadcast');
-ok('qaRosterReads<=qaRoster.length*2&&_redMesaNoise.clock<650',
+ok('qaRosterReads<=qaRoster.length*12&&_redMesaNoise.clock<650',
   'Repeated confirmed group sightings avoid quadratic roster rebroadcasts and advance sound only once per frame');
+
+// Existing state machines, update order and temporary action ownership must
+// not let a searching/investigating teammate ignore ongoing group combat.
+for (const order of ['[qaGuard,qaSearching,qaInvestigating]', '[qaSearching,qaInvestigating,qaGuard]']) {
+  scene(300, 0);
+  P(`var qaSearching=new Character(-3000,1800,false,'NORMAL');
+    var qaInvestigating=new Character(-3200,1800,false,'NORMAL');
+    for(const e of[qaSearching,qaInvestigating]){e.fireTimer=999999;e.stunTimer=180;stealthPerceptionState(e);}
+    stealthEnterPhase(qaSearching,'SEARCH');stealthEnterPhase(qaInvestigating,'INVESTIGATE');
+    enemiesList.push(qaSearching,qaInvestigating);`);
+  tick(1, 100, order);
+  ok("[qaSearching,qaInvestigating].every(e=>e.state==='CHASE'&&e.stealthPerception.phase==='ALERT'&&!e.stealthPerception.visible)",
+    `Initial detection promotes preinitialized stunned teammates with update order ${order}`);
+  P("stealthEnterPhase(qaSearching,'SEARCH');stealthEnterPhase(qaInvestigating,'INVESTIGATE');");
+  tick(1, 100, order);
+  ok("[qaSearching,qaInvestigating].every(e=>e.state==='CHASE'&&e.stealthPerception.phase==='ALERT'&&e.stealthPerception.goalX===300)",
+    `Continued confirmed combat corrects stale teammate phases with update order ${order}`);
+}
+scene(300, 0);tick();
+P(`var qaLate=new Character(-3000,1800,false,'NORMAL');qaLate.fireTimer=999999;qaLate.stunTimer=180;
+  stealthPerceptionState(qaLate);stealthEnterPhase(qaLate,'SEARCH');enemiesList.push(qaLate);`);
+tick(1, 100);
+ok("qaLate.state==='CHASE'&&qaLate.stealthPerception.phase==='ALERT'&&!qaLate.stealthPerception.visible",
+  'A delayed newly active searcher joins the existing fight by the next perception slice without running its own AI');
+
+// Cover removes the shot, not the enemy's knowledge that a fight is ongoing.
+// A real escape eventually winds down after fifteen seconds without contact.
+scene(300, 0);tick();wall('HIGH', 150, 6000);
+P('qaGuard.fireTimer=0;bullets=[];player.x=330;');tick();
+ok('!qaState.visible&&bullets.length===0',
+  'A ready shot rechecks opaque cover before the next staggered perception sample');
+tick(1, 100);
+ok("qaState.phase==='ALERT'&&qaGuard.state==='CHASE'&&!qaState.visible&&bullets.length===0",
+  'Opaque cover removes direct sight and firing while the guard retains confirmed combat');
+ok('qaState.goalX===300&&qaGuard.lastKnownX===300',
+  'Crossing behind cover does not copy the hidden player position into contact memory');
+tick(29, 100);
+ok("qaState.phase==='ALERT'&&qaGuard.state==='CHASE'&&qaState.goalX===300&&!qaState.visible",
+  'Three seconds behind cover retains combat pursuit of the last confirmed position');
+tick(110, 100);
+ok("qaState.phase==='ALERT'&&qaState.goalX===300&&!qaState.visible",
+  'Fourteen seconds without new contact still retains the confirmed fight');
+tick(20, 100);
+ok("qaState.phase==='SEARCH'&&!qaState.visible", 'A silent unseen escape reaches search after the fifteen-second combat memory');
+tick(70, 100);
+ok("qaState.phase==='PATROL'&&qaGuard.state==='PATROL'", 'A genuinely escaped player eventually lets the completed search return to patrol');
+
+scene(300, 0);tick();
+P(`player.x=9000;player.y=-9000;
+  for(var i=0;i<180;i++){frameCount++;stealthUpdateNoise(100);}
+  deltaTime=100;qaGuard.updateEnemy();`);
+ok("qaState.phase==='SEARCH'&&qaGuard.state==='SEARCH'&&!qaState.visible",
+  'A guard whose AI was delayed for eighteen world seconds expires contact immediately on its return');
+
+// World time can be identical for several observations in one frame. Fresh
+// vision wins tied older audio, and newer sound IDs win tied acoustic reports.
+scene(300, 0);
+P(`var qaPeer=new Character(-100,300,false,'NORMAL');qaPeer.fireTimer=999999;qaPeer.aimAngle=0;
+  enemiesList.push(qaPeer);activeBuildings=buildings=[{x:100,y:200,w:300,h:40,hp:Infinity,coverType:'HIGH'}];invalidateColIndex();`);
+tick();
+P(`player.x=0;player.y=250;stealthShotNoise(player);player.x=300;player.y=0;
+  deltaTime=100;qaGuard.updateEnemy();qaPeer.updateEnemy();`);
+ok('qaState.visible&&_redMesaNoise.alarm.x===300&&_redMesaNoise.alarm.y===0&&qaPeer.stealthPerception.goalX===300&&qaPeer.stealthPerception.goalY===0',
+  'A wall-hidden teammate cannot replace a newer same-frame visual report with an older sound location');
+scene(300, 0);
+P(`var qaPeer=new Character(500,0,false,'NORMAL');qaPeer.fireTimer=999999;
+  enemiesList.push(qaPeer);`);tick();
+P(`player.x=9000;player.y=-9000;frameCount++;stealthUpdateNoise(100);
+  stealthEmitNoise(500,100,200,'SHOT');stealthEmitNoise(0,100,200,'SHOT');
+  deltaTime=100;qaGuard.updateEnemy();qaPeer.updateEnemy();`);
+ok('_redMesaNoise.alarm.x===0&&_redMesaNoise.alarm.y===100&&qaPeer.stealthPerception.goalX===0&&qaPeer.stealthPerception.goalY===100',
+  'A guard hearing only an older sound ID cannot overwrite a newer same-clock acoustic report from its teammate');
+
+// Accepted sounds refresh existing combat using their recorded positions.
+// The player moves elsewhere before the listener updates, so a live-position
+// leak, manufactured visibility or shooting through cover would be observable.
+for (const kind of ['RUN', 'SHOT']) {
+  scene(300, 0);tick();wall('HIGH', 150, 6000);
+  P('player.x=9000;player.y=-9000;');tick(120, 100);
+  P(`var qaSoundX=qaGuard.x-70,qaSoundY=qaGuard.y+30;
+    player.x=qaSoundX-50;player.y=qaSoundY;player.isMoving=true;leftStick={dx:1,dy:0};
+    frameCount++;stealthUpdateNoise(16.67);`);
+  if (kind === 'RUN') {
+    P('frameCount++;player.x=qaSoundX;stealthUpdateNoise(16.67);');
+  } else {
+    P('player.x=qaSoundX;player.currentWeapon=WEAPONS.PISTOL;stealthShotNoise(player);');
+  }
+  P(`player.x=9000;player.y=-9000;player.isMoving=false;leftStick={dx:0,dy:0};
+    qaGuard.fireTimer=0;bullets=[];qaGuard.updateEnemy();`);
+  ok("qaState.phase==='ALERT'&&qaGuard.state==='CHASE'&&Math.abs(qaState.goalX-qaSoundX)<.001&&Math.abs(qaState.goalY-qaSoundY)<.001&&!qaState.visible&&bullets.length===0",
+    `An already alerted guard pursues a historical ${kind.toLowerCase()} source without seeing or firing at the hidden player`);
+  tick(40, 100);
+  ok("qaState.phase==='ALERT'&&Math.abs(qaState.goalX-qaSoundX)<.001&&Math.abs(qaState.goalY-qaSoundY)<.001&&!qaState.visible",
+    `Accepted ${kind.toLowerCase()} sound extends combat beyond the original fifteen-second sight memory`);
+}
 
 // Identity changes can occur after this frame has already updated acoustics.
 // A newly created guard must not consume the departed run/level's team alarm.

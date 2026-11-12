@@ -51318,7 +51318,8 @@ function drawStandingRearLeg(g,c,pose,rig,index,boot) {
 
 // One angular-momentum policy for living entities. Simulation callers own the
 // frame guard; rendering only reads the resulting angle and never advances it.
-function entityTurnHeading(s,target,elapsedMs,maxRate=11,responseMs=55) {
+const HOSTILE_COMBAT_TURN=Object.freeze({rate:24,responseMs:20,gain:36});
+function entityTurnHeading(s,target,elapsedMs,maxRate=11,responseMs=55,gain=12) {
   if(!Number.isFinite(target))return Number.isFinite(s.angle)?s.angle:0;
   if(!Number.isFinite(s.angle))s.angle=target;
   if(!Number.isFinite(s.velocity))s.velocity=0;
@@ -51327,7 +51328,7 @@ function entityTurnHeading(s,target,elapsedMs,maxRate=11,responseMs=55) {
   let delta=Math.atan2(Math.sin(target-s.angle),Math.cos(target-s.angle));
   if(Math.abs(Math.abs(delta)-Math.PI)<.00001&&Math.abs(s.velocity)>.001)
     delta=Math.sign(s.velocity)*Math.PI;
-  const desired=Math.max(-maxRate,Math.min(maxRate,delta*12));
+  const desired=Math.max(-maxRate,Math.min(maxRate,delta*gain));
   const previous=Math.max(-maxRate,Math.min(maxRate,s.velocity));
   const response=Math.max(1,responseMs)*.001,decay=Math.exp(-dt/response);
   s.velocity=desired+(previous-desired)*decay;
@@ -51378,6 +51379,12 @@ function enemyAimHeading(c,target,elapsedMs=deltaTime) {
   if(!combatStanceContext()||s.beginFrame!==frameCount)return target;
   if(s.frame===frameCount)return s.angle;
   s.frame=frameCount;s.target=target;
+  // A running player can orbit at over 10 rad/s inside melee range. Combat
+  // shoulders need both enough turn speed and a shorter tracking lag; raising
+  // the cap alone leaves the old proportional response trailing that orbit.
+  // Reuse the same once-per-frame turn for firing and the final rendered pose.
+  if(c.state==='CHASE'&&stealthPerceptionActor(c))
+    return entityTurnHeading(s,target,elapsedMs,HOSTILE_COMBAT_TURN.rate,HOSTILE_COMBAT_TURN.responseMs,HOSTILE_COMBAT_TURN.gain);
   // A caster's shortest committed half-charge lasts 390 ms. Its shoulders
   // settle on the unchanged spell telegraph before that release window.
   const caster=isOccultMagician(c);
@@ -60782,11 +60789,11 @@ function placePlayerForReturnTravel(biome) {
 // chunk eviction, travel and loading cannot erase a kill or mint another reward.
 // Shared human perception, promoted from the validated Red Mesa sandbox.
 const STEALTH_PERCEPTION=Object.freeze({range:680,instantRange:400,halfCone:Math.PI*.29,senseMs:100, // 20 m at 20 world units/metre.
-  graceMs:450,curiousMs:400,loseMs:2200,searchMs:6500,noiseTtlMs:900,
+  graceMs:450,curiousMs:400,loseMs:15000,searchMs:6500,noiseTtlMs:900,
   stepDistance:46,noiseCap:12,earRadius:280,
   investigateSpeed:3.6,searchSpeed:3.2,turnRate:18,turnResponseMs:35});
 const RED_MESA_STEALTH=STEALTH_PERCEPTION; // Existing encounter tuning compatibility.
-let _redMesaNoise={frame:-1,clock:0,events:[],nextId:1,alarm:null,alarmId:0,x:null,y:null,stride:0,framePlayer:null,lightFrame:-1,light:.5,level:currentLevel};
+let _redMesaNoise={frame:-1,clock:0,events:[],nextId:1,alarm:null,alarmId:0,alarmFrame:-1,alarmAt:-100,x:null,y:null,stride:0,framePlayer:null,lightFrame:-1,light:.5,level:currentLevel};
 // Common human perception: ordinary patrols keep their native routes and
 // confirmed alerts reuse native combat. Scripted battles and special AI own
 // their original targeting rather than entering a second state machine.
@@ -60813,7 +60820,7 @@ function redMesaStealthContext(){
     frontierBountyRecord(FRONTIER_BOUNTY_DEFS[0]).stage==='ACTIVE'&&frontierBountyContext();
 }
 function redMesaStealthActor(e){return !!e&&e.frontierBountyId==='RED_MESA'&&redMesaStealthContext()&&stealthPerceptionActor(e);}
-function stealthPerceptionReset(){_redMesaNoise={frame:-1,clock:0,events:[],nextId:1,alarm:null,alarmId:0,x:null,y:null,stride:0,framePlayer:null,lightFrame:-1,light:.5,level:currentLevel};}
+function stealthPerceptionReset(){_redMesaNoise={frame:-1,clock:0,events:[],nextId:1,alarm:null,alarmId:0,alarmFrame:-1,alarmAt:-100,x:null,y:null,stride:0,framePlayer:null,lightFrame:-1,light:.5,level:currentLevel};}
 function stealthSurfaceAt(x,y){
   if(currentLevel===3)return redMesaSurfaceAt(x,y)||frontierSurfaceAt(x,y)||'EARTH';
   // Reuse the collision broad phase for authored boardwalk/deck materials.
@@ -60850,6 +60857,7 @@ function stealthUpdateNoise(dt=deltaTime){
   if(_redMesaNoise.frame===frameCount)return;
   const n=_redMesaNoise;n.frame=frameCount;n.clock+=Math.min(100,Math.max(0,dt||1000/60));
   for(let i=n.events.length-1;i>=0;i--)if(n.clock-n.events[i].at>STEALTH_PERCEPTION.noiseTtlMs)n.events.splice(i,1);
+  stealthDispatchAlarm(n.alarm);
   if(n.framePlayer!==player){n.framePlayer=player;n.x=player.x;n.y=player.y;n.stride=0;return;}
   const moved=Math.hypot(player.x-n.x,player.y-n.y),radius=stealthRunningRadius(player);
   n.x=player.x;n.y=player.y;
@@ -60881,12 +60889,14 @@ function stealthHiddenByLowCover(observer,target=player){
   }
   return false;
 }
-function stealthPerceptionVisible(observer,target=player){
+function stealthPerceptionVisible(observer,target=player,engaged=false){
   if(!stealthPerceptionActor(observer)||!target||target.dead||!(target.hp>0)||!shovelActorsVisible(observer,target))return false;
   const dx=target.x-observer.x,dy=target.y-observer.y,d2=dx*dx+dy*dy;
   if(d2>STEALTH_PERCEPTION.range*STEALTH_PERCEPTION.range)return false;
   const facing=observer.aimAngle||0;
-  if(d2>.01&&(dx*Math.cos(facing)+dy*Math.sin(facing))/Math.sqrt(d2)<Math.cos(STEALTH_PERCEPTION.halfCone))return false;
+  // The cone acquires an unknown threat. A confirmed combatant keeps watching
+  // that threat while their shoulders turn, with the same cover/layer checks.
+  if(!engaged&&d2>.01&&(dx*Math.cos(facing)+dy*Math.sin(facing))/Math.sqrt(d2)<Math.cos(STEALTH_PERCEPTION.halfCone))return false;
   // Connected excavated tunnels already passed their own layer/ceiling LOS.
   // Surface buildings above the tunnel cannot hide a fellow underground actor.
   if(shovelPlayerDepth(observer)>=SHOVEL.underground)return true;
@@ -60931,7 +60941,7 @@ function stealthIllumination(target=player){
 function stealthPerceptionState(e){
   if(!e.stealthPerception)e.stealthPerception=e.redMesaStealth||{phase:e.state==='CHASE'?'ALERT':'PATROL',suspicion:e.state==='CHASE'?1:0,visible:false,handled:true,
     sampleMs:e.state==='CHASE'||e.frontierBountyId==='RED_MESA'?STEALTH_PERCEPTION.senseMs:Math.max(0,Math.min(9,e.aiOffset||0))*STEALTH_PERCEPTION.senseMs/10,
-    recognitionMs:0,lostMs:0,phaseMs:0,heardId:0,goalX:Number.isFinite(e.lastKnownX)?e.lastKnownX:e.x,
+    recognitionMs:0,lostMs:0,contactAt:_redMesaNoise.clock,phaseMs:0,heardId:0,goalX:Number.isFinite(e.lastKnownX)?e.lastKnownX:e.x,
     goalY:Number.isFinite(e.lastKnownY)?e.lastKnownY:e.y,homeX:e.x,homeY:e.y,patrolIndex:0,waitMs:600,health:e.hp};
   // The alias keeps the existing Red Mesa saved survivor format compatible.
   e.redMesaStealth=e.stealthPerception;return e.stealthPerception;
@@ -60955,26 +60965,39 @@ function restoreRedMesaStealthActor(e,saved){
   e.state=s.phase==='ALERT'?'CHASE':s.phase;
 }
 function stealthEnterPhase(e,phase){const s=stealthPerceptionState(e);if(s.phase!==phase){s.phase=phase;s.phaseMs=0;}e.state=phase==='ALERT'?'CHASE':phase;}
+function stealthSearchLastContact(e,s){
+  stealthEnterPhase(e,'SEARCH');s.suspicion=.65;s.recognitionMs=0;s.searchFacing=null;
+}
 function stealthAcceptAlarm(e,alarm){
   const s=stealthPerceptionState(e);stealthEnterPhase(e,'ALERT');s.suspicion=1;
-  s.alarmId=alarm.id;s.lostMs=Math.max(0,_redMesaNoise.clock-alarm.at);
+  s.alarmId=alarm.id;s.contactAt=alarm.at;s.lostMs=Math.max(0,_redMesaNoise.clock-alarm.at);
   e.lastKnownX=s.goalX=alarm.x;e.lastKnownY=s.goalY=alarm.y;
   e.loseSightTimer=Math.max(1,(STEALTH_PERCEPTION.loseMs-s.lostMs)/16.67);
   // A report shares a confirmed position, never another guard's visibility.
 }
-function stealthAlert(e,x,y){
+function stealthDispatchAlarm(alarm,immediate=false){
+  const n=_redMesaNoise;
+  if(!alarm||n.clock-alarm.at>=STEALTH_PERCEPTION.loseMs||n.alarmFrame===frameCount||
+      !immediate&&n.clock-n.alarmAt<STEALTH_PERCEPTION.senseMs)return;
+  // Refresh the cohort once per perception slice, including stunned guards
+  // whose Character AI cannot consume a report yet. Never scan per recipient.
+  n.alarmFrame=frameCount;n.alarmAt=n.clock;
+  for(const other of enemiesList){
+    if(!stealthPerceptionActor(other)||!shovelSameLayer(other,alarm))continue;
+    const s=stealthPerceptionState(other);
+    if(s.phase!=='ALERT'||other.state!=='CHASE'||s.alarmId!==alarm.id)stealthAcceptAlarm(other,alarm);
+  }
+}
+function stealthAlert(e,x,y,at=_redMesaNoise.clock,noiseId=0){
   const s=stealthPerceptionState(e),n=_redMesaNoise,previous=n.alarm;
   const broadcast=s.phase!=='ALERT'||!previous||n.clock-previous.at>=STEALTH_PERCEPTION.loseMs||!shovelSameLayer(e,previous);
-  // Refresh one shared last-seen report in O(1). Only a new combat alert
-  // walks the roster; recipients do not recursively broadcast to each other.
+  // Reports carry observed/heard positions and their original timestamps.
+  // Receiving a report never republishes it or extends its expiry.
   const depth=shovelPlayerDepth(e);
-  const alarm=previous&&previous.at===n.clock&&previous.x===x&&previous.y===y&&previous.shovelDepth===depth?previous:
-    (n.alarm={id:++n.alarmId,x,y,at:n.clock,shovelLevel:currentLevel,shovelDepth:depth});
+  const alarm=previous&&previous.at===at&&previous.x===x&&previous.y===y&&previous.shovelDepth===depth&&previous.noiseId===noiseId?previous:
+    (n.alarm={id:++n.alarmId,x,y,at,noiseId,shovelLevel:currentLevel,shovelDepth:depth});
   stealthAcceptAlarm(e,alarm);
-  if(broadcast)for(const other of enemiesList){
-    if(other===e||!stealthPerceptionActor(other)||!shovelSameLayer(other,e))continue;
-    stealthAcceptAlarm(other,alarm);
-  }
+  stealthDispatchAlarm(alarm,broadcast);
 }
 function stealthCloseSight(e,target){
   const dx=target.x-e.x,dy=target.y-e.y;
@@ -61020,6 +61043,9 @@ function stealthUpdateEnemy(e,spd=1){
   s.layerVisible=layerNow;
   const alarm=n.alarm;
   if(alarm&&s.alarmId!==alarm.id&&n.clock-alarm.at<STEALTH_PERCEPTION.loseMs&&shovelSameLayer(e,alarm))stealthAcceptAlarm(e,alarm);
+  if(!Number.isFinite(s.contactAt))s.contactAt=n.clock-Math.max(0,s.lostMs);
+  // AI culling or stun must not pause combat memory while world time advances.
+  if(s.phase==='ALERT'&&n.clock-s.contactAt>=STEALTH_PERCEPTION.loseMs)stealthSearchLastContact(e,s);
   const hurt=e.hp<s.health;s.health=e.hp;
   // External CHASE orders (damage, triggered encounters, turned towns) are
   // explicit alerts and must not be undone by a previously curious guard.
@@ -61029,7 +61055,7 @@ function stealthUpdateEnemy(e,spd=1){
   const closeVisible=s.phase==='ALERT'?null:stealthCloseSight(e,target);
   if(closeVisible){s.visible=true;stealthAlert(e,target.x,target.y);}
   if(s.sampleMs>=STEALTH_PERCEPTION.senseMs){
-    const elapsed=Math.min(200,s.sampleMs);s.sampleMs=0;s.visible=closeVisible===null?stealthPerceptionVisible(e,target):closeVisible;
+    const elapsed=Math.min(200,s.sampleMs);s.sampleMs=0;s.visible=closeVisible===null?stealthPerceptionVisible(e,target,s.phase==='ALERT'):closeVisible;
     if(e.aggroTarget&&Number.isFinite(e.aggroTimer)){
       e.aggroTimer-=elapsed/16.67;if(e.aggroTimer<=0)e.aggroTarget=null;
     }
@@ -61045,15 +61071,30 @@ function stealthUpdateEnemy(e,spd=1){
       else if(s.phase==='PATROL')stealthEnterPhase(e,'CURIOUS');
     }else{s.recognitionMs=Math.max(0,s.recognitionMs-elapsed);s.suspicion=Math.max(0,s.suspicion-elapsed*(s.phase==='ALERT'?0:.00010));}
   }
+  // Ducking or changing layers invalidates sight immediately. An opaque wall
+  // also gets a fresh native ray before a ready gun can use cached visibility.
+  if(s.visible&&(!layerNow||stealthHiddenByLowCover(e,target)||
+      e.fireTimer<=0&&!stealthPerceptionVisible(e,target,s.phase==='ALERT')))s.visible=false;
   // Hearing consumes each bounded event immediately, without waiting for the
   // sight slice. It observes the historical source once, never a hidden
   // player's current position; high walls still attenuate the sound.
   for(const event of n.events){
     if(event.id<=s.heardId)continue;
     s.heardId=event.id;const distance=Math.hypot(event.x-e.x,event.y-e.y);
-    if(distance>event.radius||s.phase==='ALERT')continue;
+    if(distance>event.radius)continue;
     const clear=hasLOS(e.x,e.y,event.x,event.y),reach=event.radius*(clear?1:.42);
     if(distance>reach)continue;
+    if(s.phase==='ALERT'){
+      // Once identified, the player's audible footsteps and shots are new
+      // combat clues. Neither a hidden live position nor stale audio replaces
+      // a newer visual report; quiet cover still lets the player escape.
+      // Sight wins a same-clock tie. Among sounds, keep the newer event ID;
+      // another listener may only have heard an older part of the burst.
+      if(s.visible||n.alarm&&(event.at<n.alarm.at||event.at===n.alarm.at&&(!n.alarm.noiseId||event.id<n.alarm.noiseId)))continue;
+      stealthAlert(e,event.x,event.y,event.at,event.id);
+      if(distance>.01){stealthTurnToward(e,s,Math.atan2(event.y-e.y,event.x-e.x),dt,true);s.heardTurnFrame=frameCount;}
+      continue;
+    }
     s.goalX=event.x;s.goalY=event.y;s.searchFacing=null;
     s.suspicion=Math.max(s.suspicion,event.kind==='SHOT'?.4:.18);
     s.waitMs=STEALTH_PERCEPTION.curiousMs;
@@ -61063,12 +61104,9 @@ function stealthUpdateEnemy(e,spd=1){
   if(s.phase!=='ALERT'&&s.heardTurnFrame===frameCount&&stealthCloseSight(e,target)){
     s.visible=true;stealthAlert(e,target.x,target.y);
   }
-  // Concealment takes effect immediately rather than waiting for the sight
-  // slice, especially when ducking back behind waist-high cover after a peek.
-  if(s.visible&&(!shovelActorsVisible(e,target)||stealthHiddenByLowCover(e,target)))s.visible=false;
   if(s.phase==='ALERT'){
-    if(!s.visible)s.lostMs+=dt;
-    if(s.lostMs>=STEALTH_PERCEPTION.loseMs){stealthEnterPhase(e,'SEARCH');s.suspicion=.65;s.recognitionMs=0;s.searchFacing=null;}
+    s.lostMs=Math.max(0,n.clock-s.contactAt);
+    if(s.lostMs>=STEALTH_PERCEPTION.loseMs)stealthSearchLastContact(e,s);
     else{e.loseSightTimer=Math.max(1,(STEALTH_PERCEPTION.loseMs-s.lostMs)/16.67);
       s.handled=false;s.distance=s.visible?Math.hypot(target.x-e.x,target.y-e.y):Math.hypot(s.goalX-e.x,s.goalY-e.y);
       s.angle=Math.atan2((s.visible?target.y:s.goalY)-e.y,(s.visible?target.x:s.goalX)-e.x);return s;}

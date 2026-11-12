@@ -55,6 +55,7 @@ async function checkBehavior(page){
    nm0AmbushActive=farmAmbushActive=false;
    stealthPerceptionReset();worldTimeMs=13/24*DAY_MS;updateSunVector();
    resetActorStance(player);player.cover=null;player.mounted=false;player.dashTimer=0;player.hp=player.maxHp;
+   player.muzzleFlash=player.weaponKick=0;
    player.x=5400+distance;player.y=-3600;player.isMoving=false;player.gait=0;player.aimAngle=0;
    leftStick.dx=leftStick.dy=0;activeBuildings=[];buildings=[];invalidateColIndex();
    const guard=new Character(5400,-3600,false,'NORMAL');
@@ -78,7 +79,8 @@ async function checkBehavior(page){
    const wall={x:5510,y:-3600,w:38,h:6000,coverType:'HIGH',hp:Infinity,maxHp:Infinity};
    activeBuildings=[wall];buildings=[wall];invalidateColIndex();player.x=5750;player.y=-3440;
    row.lostSight={lastSeen,hiddenPlayer:{x:player.x,y:player.y},phases:[]};
-   for(let i=0;i<230;i++){
+   const lossTicks=Math.ceil((STEALTH_PERCEPTION.loseMs+STEALTH_PERCEPTION.searchMs+2000)/50);
+   for(let i=0;i<lossTicks;i++){
     const s=tick(guard);
     if(i===0||s.phase!==row.lostSight.phases.at(-1).phase)row.lostSight.phases.push({afterMs:(i+1)*50,phase:s.phase,visible:s.visible,goalX:s.goalX,goalY:s.goalY});
     if(s.phase==='PATROL')break;
@@ -143,6 +145,76 @@ async function checkBehavior(page){
    results.fastMovement.push({phase,distance:Math.hypot(guard.x-x,guard.y-y),firstTurn:turns[0],maxTurn:Math.max(...turns),
     finalAngle:after,repeatAngle:guard.aimAngle,sharedAngle:guard._entityFacing.angle});
   }
+  // Exercise the native combat caller as well as the common heading helper.
+  // The player covers about 6.6 units/frame while circling a live combat guard.
+  results.combatOrbit=[];
+  for(const direction of [-1,1]){
+   guard=prepare(1,300);tick(guard,1000/60);
+   let largestError=0,visibleFrames=0,alertFrames=0;
+   const radius=110,step=.06,frames=360;
+   for(let i=1;i<=frames;i++){
+    const angle=direction*i*step;
+    player.x=guard.x+Math.cos(angle)*radius;player.y=guard.y+Math.sin(angle)*radius;
+    const s=tick(guard,1000/60),bearing=Math.atan2(player.y-guard.y,player.x-guard.x);
+    if(i>30){
+     largestError=Math.max(largestError,Math.abs(Math.atan2(Math.sin(bearing-guard.aimAngle),Math.cos(bearing-guard.aimAngle))));
+     visibleFrames+=Number(s.visible);alertFrames+=Number(s.phase==='ALERT'&&guard.state==='CHASE');
+    }
+   }
+   results.combatOrbit.push({direction,largestError,visibleFrames,alertFrames,measuredFrames:frames-30});
+  }
+  results.coverFight=[];
+  for(const kind of ['HIGH','LOW']){
+   guard=prepare(1,220);tick(guard,100);
+   const observed={x:stealthPerceptionState(guard).goalX,y:stealthPerceptionState(guard).goalY};
+   activeBuildings=buildings=[{x:5510,y:-3600,w:38,h:6000,coverType:kind,hp:Infinity,maxHp:Infinity}];invalidateColIndex();
+   if(kind==='LOW')resetActorStance(player,'CROUCH');
+   else{player.x+=45;player.y+=30;}
+   bullets=[];guard.fireTimer=0;
+   let retained=true,hidden=true;
+   for(let i=0;i<60;i++){
+    const s=tick(guard,100);retained&&=s.phase==='ALERT'&&guard.state==='CHASE';hidden&&=!s.visible;
+   }
+   const s=stealthPerceptionState(guard),memory={x:s.goalX,y:s.goalY};
+   results.coverFight.push({kind,hiddenMs:6000,retained,hidden,blockedBullets:bullets.length,observed,memory,
+    hiddenPlayer:{x:player.x,y:player.y},phase:s.phase,loseMs:STEALTH_PERCEPTION.loseMs});
+   activeBuildings=buildings=[];invalidateColIndex();resetActorStance(player);
+   let reacquired=false;
+   for(let i=0;i<30&&!reacquired;i++)reacquired=tick(guard,1000/60).visible;
+   results.coverFight.at(-1).reacquired=reacquired;
+  }
+  guard=prepare(1,220);tick(guard,100);player.currentWeapon=WEAPONS.PISTOL;player.ammo=17;player.reloadTimer=0;player.aimAngle=0;
+  activeBuildings=buildings=[{x:5510,y:-3600,w:38,h:6000,coverType:'HIGH',hp:Infinity,maxHp:Infinity}];invalidateColIndex();
+  guard.fireTimer=0;bullets=[];let lastShot=null,gunfightRetained=true,gunfightHidden=true;const acousticSamples=[];
+  for(let i=0;i<180;i++){
+   if(i%40===0){
+    // Stay within the real wall-attenuated hearing radius as the guard moves
+    // along cover; a legitimately inaudible shot must not sustain contact.
+    player.x=5620+i/40*15;player.y=guard.y+20;player.fire(0);lastShot={..._redMesaNoise.events.at(-1)};
+    acousticSamples.push({source:lastShot,guard:{x:guard.x,y:guard.y},distance:Math.hypot(player.x-guard.x,player.y-guard.y),
+     reach:lastShot.radius*(hasLOS(guard.x,guard.y,player.x,player.y)?1:.42)});
+   }
+   player.y+=.1;
+   const s=tick(guard,100);gunfightRetained&&=s.phase==='ALERT'&&guard.state==='CHASE';gunfightHidden&&=!s.visible;
+  }
+  results.audibleCoveredFight={elapsedMs:18000,retained:gunfightRetained,hidden:gunfightHidden,
+   blockedBullets:bullets.filter(b=>b.shooter===guard).length,playerShots:bullets.filter(b=>b.shooter===player).length,
+   source:lastShot,memory:{x:stealthPerceptionState(guard).goalX,y:stealthPerceptionState(guard).goalY},player:{x:player.x,y:player.y},acousticSamples};
+  // A previously alerted spotter must dispatch to guards that entered search,
+  // or arrived late, even when the recipients cannot update their own AI yet.
+  guard=prepare(1,300);tick(guard,100);
+  const cohort=[];
+  for(const [index,phase]of ['SEARCH','INVESTIGATE','SEARCH'].entries()){
+   const member=new Character(7400+index*100,-3600,false,'NORMAL');
+   member.isArmed=true;member.currentWeapon=WEAPONS.PISTOL;member.fireTimer=99999;member.aimAngle=0;
+   stealthEnterPhase(member,phase);const state=stealthPerceptionState(member);state.goalX=member.x;state.goalY=member.y;
+   if(index===2)member.stunTimer=120;
+   cohort.push(member);enemiesList.push(member);
+  }
+  for(let i=0;i<10;i++)tick(guard,50);
+  results.existingAlertDispatch=cohort.map(member=>({phase:stealthPerceptionState(member).phase,state:member.state,
+   visible:stealthPerceptionState(member).visible,stunTimer:member.stunTimer||0,
+   goal:{x:stealthPerceptionState(member).goalX,y:stealthPerceptionState(member).goalY}}));
   guard=prepare(3);player.isMoving=true;player.gait=1;leftStick.dx=1;results.materialRadii={};
   for(const kind of ['EARTH','TIMBER','STONE']){
    const zone=kind==='EARTH'?{x0:-250,x1:-200,y0:250,y1:280}:RED_MESA_SURFACES.find(z=>z.kind===kind);
@@ -179,6 +251,7 @@ async function checkBehavior(page){
   assert.equal(row.curiosity.at(-1).nativeState,'CHASE','Confirmed alert returns to native combat');
   const search=row.lostSight.phases.find(s=>s.phase==='SEARCH');
   assert.ok(search&&!search.visible,'Broken sight enters search');
+  assert.ok(search.afterMs>=15000,'Breaking cover sight retains the firefight for fifteen seconds before searching');
   assert.deepEqual({x:search.goalX,y:search.goalY},row.lostSight.lastSeen,'Search follows history, not hidden player');
   assert.equal(row.lostSight.phases.at(-1).phase,'PATROL','Failed search restores native patrol');
   assert.ok(row.crouchHidden&&row.proneHidden&&row.standingExposed&&row.edgeExposed,'Low cover conceals across its physical rays');
@@ -207,6 +280,26 @@ async function checkBehavior(page){
   assert.equal(row.repeatAngle,row.finalAngle,'The native finally filter consumes an urgent turn only once');
   assert.equal(row.sharedAngle,row.finalAngle,'The shared shoulder state matches the rendered urgent heading');
  }
+ for(const row of result.combatOrbit){
+  assert.ok(row.largestError<.55,`Native combat tracks a ${row.direction<0?'clockwise':'counterclockwise'} close orbit without falling behind`);
+  assert.equal(row.alertFrames,row.measuredFrames,'Continuous visible combat never drops back to investigating');
+  assert.ok(row.visibleFrames>=row.measuredFrames*.9,'A circling exposed player stays inside the tracked cone');
+ }
+ for(const row of result.coverFight){
+  assert.ok(row.loseMs>=15000&&row.retained,`${row.kind} cover preserves the confirmed firefight through a six-second concealment`);
+  assert.ok(row.hidden&&row.blockedBullets===0,'Remembering contact does not permit shooting through concealment');
+  assert.deepEqual(row.memory,row.observed,'Brief cover keeps the last observed location rather than live hidden tracking');
+  assert.ok(row.reacquired,'Leaving brief cover restores combat visibility without a new suspicion buildup');
+ }
+ const fight=result.audibleCoveredFight;
+ assert.equal(fight.playerShots,5,'The covered firefight emits five real native player shots');
+ assert.ok(fight.acousticSamples.every(row=>row.distance<=row.reach),'Covered gunfire fixtures stay inside the actual attenuated hearing radius');
+ assert.ok(fight.retained&&fight.hidden&&fight.blockedBullets===0,'Audible covered gunfire sustains an eighteen-second fight without granting shooting visibility');
+ assert.deepEqual(fight.memory,{x:fight.source.x,y:fight.source.y},'Covered gunfire updates the historical contact position once');
+ assert.notDeepEqual(fight.memory,fight.player,'Quiet movement after the shot cannot become live hidden tracking');
+ assert.ok(result.existingAlertDispatch.every(row=>row.phase==='ALERT'&&row.state==='CHASE'&&!row.visible),
+  'An already alerted observer promotes searching, investigating and stunned teammates without granting visibility');
+ assert.ok(result.existingAlertDispatch.at(-1).stunTimer>0,'A stunned teammate receives the shared fight state before its AI resumes');
  assert.ok(result.materialRadii.TIMBER>result.materialRadii.STONE&&result.materialRadii.STONE>result.materialRadii.EARTH,'Authored materials still scale noise outside active bounty');
  assert.ok(result.highCoverHidden&&result.highCoverPeek.valid&&result.highCoverPeek.exposed&&result.highCoverPeek.rootStillBlocked,'Native high-cover lean exposes the upper body while its root remains blocked');
  assert.ok(result.nightIllumination<result.dayIllumination&&result.shadowIllumination<result.sunlitIllumination,'Ordinary enemy illumination reflects night and building shadows');

@@ -108,7 +108,8 @@ async function main(){
    const screen={x:def.x+110,y:def.y,w:38,h:6000,coverType:'HIGH',hp:Infinity,maxHp:Infinity};
    activeBuildings=[screen];buildings=[screen];invalidateColIndex();player.x=def.x+350;player.y=def.y+160;
    const loss=[];
-   for(let i=0;i<220;i++){
+   const lossTicks=Math.ceil((RED_MESA_STEALTH.loseMs+RED_MESA_STEALTH.searchMs+2000)/50);
+   for(let i=0;i<lossTicks;i++){
     const state=tick(guard);
     if(i===0||state.phase!==loss.at(-1).phase)loss.push({afterHideMs:(i+1)*50,phase:state.phase,visible:state.visible,goalX:state.goalX,goalY:state.goalY});
     if(state.phase==='PATROL')break;
@@ -160,6 +161,7 @@ async function main(){
   assert.equal(behavior.curiosity.at(-1).phase,'ALERT','Sustained clear sight reaches full alert');
   const search=behavior.lostSight.phases.find(s=>s.phase==='SEARCH');
   assert.ok(search&&!search.visible,'An alerted guard searches after the player breaks sight');
+  assert.ok(search.afterHideMs>=15000,'Red Mesa guards retain confirmed contact for fifteen seconds after sight breaks');
   assert.deepEqual({x:search.goalX,y:search.goalY},behavior.lostSight.lastSeen,'Search follows the last seen position, not the hidden player');
   assert.equal(behavior.lostSight.phases.at(-1).phase,'PATROL','Unsuccessful search eventually returns to patrol');
   assert.ok(behavior.crouchHidden&&behavior.proneHidden&&behavior.standingExposed&&behavior.aroundEdgeExposed,'Low cover hides a low stance only across the actual observer ray');
