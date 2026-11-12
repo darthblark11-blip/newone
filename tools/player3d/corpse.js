@@ -11,7 +11,7 @@ function player3DCorpseWorldOrigin(c) {
 }
 
 function player3DCorpseHeadScale() {
-  return typeof PLAYER3D_HEAD_SCALE==='number'?PLAYER3D_HEAD_SCALE:1.1;
+  return typeof PLAYER3D_HEAD_SCALE==='number'?PLAYER3D_HEAD_SCALE:1;
 }
 
 // Player bodies remain cheap static geometry after settling, so their cel

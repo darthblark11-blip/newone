@@ -317,7 +317,7 @@ def assemble(body_collection,equipment_collection):
     bpy.ops.object.mode_set(mode='OBJECT');rig.show_in_front=True
     source_part('Shirt','torso',(0,0,1.20),(.19,.265,.29),bone='chest',collection=body_collection)
     source_part('Trousers pelvis','pelvis',(-.015,0,.93),(.17,.20,.16),bone='pelvis',collection=body_collection)
-    source_part('Bald head','head',(.015,0,1.66),(.165,.165,.165),bone='head',collection=body_collection)
+    source_part('Bald head','head',(.015,0,1.66),(.15,.15,.15),bone='head',collection=body_collection)
     for side,sign in [('L',1),('R',-1)]:
         for semantic,width in [('upper_arm',.23),('forearm',.184),('thigh',.28),('shin',.22)]:
             definition=next(b for b in bone_defs if b[0]==f'{semantic}.{side}')
@@ -334,10 +334,10 @@ def assemble(body_collection,equipment_collection):
     for name,semantic,center,scale,bone in [
         ('Armor vest','vest',(0,0,1.20),(.20,.27,.30),'chest'),
         ('Chemist coat','coat',(0,0,1.20),(.205,.28,.30),'chest'),
-        ('Ninja hood','hood',(.015,0,1.66),(.165,.165,.165),'head'),
+        ('Ninja hood','hood',(.015,0,1.66),(.15,.15,.15),'head'),
         ('Cowboy hat','cowboy_hat',(.015,0,1.78),(.145,.14,.15),'head'),
-        ('Armor helmet','helmet',(.015,0,1.66),(.165,.165,.165),'head'),
-        ('Armor visor','visor',(.015,0,1.66),(.165,.165,.165),'head'),
+        ('Armor helmet','helmet',(.015,0,1.66),(.15,.15,.15),'head'),
+        ('Armor visor','visor',(.015,0,1.66),(.15,.15,.15),'head'),
         ('Jetpack','jetpack',(-.24,0,1.22),(.25,.30,.32),'chest')]:
         source_part(name,semantic,center,scale,bone=bone,visible=False,collection=equipment_collection)
     for i,name in enumerate(['pistol','revolver','smg','rifle','shotgun','coach_gun','rocket','bow','taser','particle_beam','sword','pickaxe','shovel','cannon','grenade','flask']):

@@ -2,7 +2,7 @@
 // The orthographic mesh camera drops Z: native contact and muzzle XY remain
 // authoritative while the height/IK solve gives the model volume and depth.
 // No animation clocks, random numbers or mutable game state live in this file.
-const PLAYER3D_HEAD_SCALE = 1.1;
+const PLAYER3D_HEAD_SCALE = 1;
 const Player3DMath = (() => {
   const clamp=(x,a=0,b=1)=>Math.max(a,Math.min(b,Number(x)||0));
   const point=(x=0,y=0,z=0)=>({x:Number(x)||0,y:Number(y)||0,z:Number(z)||0});
@@ -48,6 +48,54 @@ const Player3DMath = (() => {
   };
   return {clamp,point,add,sub,mul,dot,cross,norm,mix,rotate,matrix,frame,postureFrame,segment,elbow,color};
 })();
+
+// Reuse CPU projection buffers for the one support-hand contact solve. This
+// does not allocate or upload GPU geometry and never changes simulation data.
+const _player3DSupportProjection = new WeakMap();
+function player3DProjectedSupportMesh(mesh,matrix) {
+  let projected=_player3DSupportProjection.get(mesh);
+  if(!projected){projected={positions:new Float64Array(mesh.positions.length),indices:mesh.indices,bounds:new Float64Array(6)};_player3DSupportProjection.set(mesh,projected);}
+  const p=mesh.positions,q=projected.positions,b=projected.bounds;
+  b[0]=b[1]=b[2]=Infinity;b[3]=b[4]=b[5]=-Infinity;
+  for(let i=0;i<p.length;i+=3)for(let axis=0;axis<3;axis++){
+    const v=matrix[axis]*p[i]+matrix[axis+4]*p[i+1]+matrix[axis+8]*p[i+2]+matrix[axis+12];
+    q[i+axis]=v;b[axis]=Math.min(b[axis],v);b[axis+3]=Math.max(b[axis+3],v);
+  }
+  return projected;
+}
+
+// Lowest gun surface inside the palm's projected rectangle. The minimum of a
+// triangle/rectangle intersection occurs at an enclosed vertex, an edge
+// crossing, or an enclosed rectangle corner, so no coarse depth samples are
+// needed. The rectangle conservatively contains the real palm silhouette.
+function player3DSupportUnderside(surface,box) {
+  const p=surface.positions,ix=surface.indices,x0=box[0],y0=box[1],x1=box[3],y1=box[4];
+  let lowest=Infinity;
+  for(let i=0;i<ix.length;i+=3){
+    const ai=ix[i]*3,bi=ix[i+1]*3,ci=ix[i+2]*3;
+    const ax=p[ai],ay=p[ai+1],az=p[ai+2],bx=p[bi],by=p[bi+1],bz=p[bi+2],cx=p[ci],cy=p[ci+1],cz=p[ci+2];
+    if(Math.max(ax,bx,cx)<x0||Math.min(ax,bx,cx)>x1||Math.max(ay,by,cy)<y0||Math.min(ay,by,cy)>y1)continue;
+    for(const vi of [ai,bi,ci])if(p[vi]>=x0&&p[vi]<=x1&&p[vi+1]>=y0&&p[vi+1]<=y1)lowest=Math.min(lowest,p[vi+2]);
+    for(const [a,b] of [[ai,bi],[bi,ci],[ci,ai]]){
+      const dx=p[b]-p[a],dy=p[b+1]-p[a+1],dz=p[b+2]-p[a+2];
+      if(Math.abs(dx)>1e-10)for(const x of [x0,x1]){
+        const t=(x-p[a])/dx,y=p[a+1]+dy*t;
+        if(t>=0&&t<=1&&y>=y0-.00001&&y<=y1+.00001)lowest=Math.min(lowest,p[a+2]+dz*t);
+      }
+      if(Math.abs(dy)>1e-10)for(const y of [y0,y1]){
+        const t=(y-p[a+1])/dy,x=p[a]+dx*t;
+        if(t>=0&&t<=1&&x>=x0-.00001&&x<=x1+.00001)lowest=Math.min(lowest,p[a+2]+dz*t);
+      }
+    }
+    const denominator=(by-cy)*(ax-cx)+(cx-bx)*(ay-cy);
+    if(Math.abs(denominator)<1e-10)continue;
+    for(const x of [x0,x1])for(const y of [y0,y1]){
+      const a=((by-cy)*(x-cx)+(cx-bx)*(y-cy))/denominator,b=((cy-ay)*(x-cx)+(ax-cx)*(y-cy))/denominator,c=1-a-b;
+      if(a>=-.000001&&b>=-.000001&&c>=-.000001)lowest=Math.min(lowest,a*az+b*bz+c*cz);
+    }
+  }
+  return lowest;
+}
 
 function player3DPose(actor, options = {}) {
   if(!actor)return null;
@@ -419,9 +467,53 @@ function player3DPose(actor, options = {}) {
       const hat=safe(()=>headwearOf(identity),null);
       if(hat)oval(hat==='STETSON'?'cowboy_hat':hat==='HOOD'?'hood':'helmet',add(p.head,mul(basis.z,2)),hat==='STETSON'?6.2:7.1,hat==='STETSON'?6.5:7.3,hat==='STETSON'?4.5:7.5,[75,86,80],'headwear');
     }
-    if(identity.jetpack){const packCenter=add(p.chest,mul(forward,-bw*(typeof TORSO_DEPTH==='number'?TORSO_DEPTH:.84)*.5-.5));
-      if(nativeFrames)fittedOval('jetpack',packCenter,12,24,6.5,[87,94,104],'jetpack',basis,p.chestHeading);
-      else oval('jetpack',add(p.chest,mul(forward,-torsoDepth*.82)),14,17,14,[87,94,104],'jetpack');}
+    if(identity.jetpack) {
+      // The pack is a rigid object attached to the posterior chest surface.
+      // Fitting its XY bounds after each turn sheared its tanks, and a ground-
+      // plane offset buried the whole pack when the back became horizontal.
+      const nativePackFrame=nativeFrames&&kind!=='STUN';
+      const packFloor=nativePackFrame?clamp(stance&&Number.isFinite(stance.floor)?stance.floor:floor):0;
+      const packPosture=nativePackFrame?M.postureFrame(p.chestHeading,packFloor*Math.PI*.5):basis;
+      // Prone aiming rolls about the spine; it does not stand the pack upright
+      // halfway between belly and back. Trigonometric rotation also stays
+      // continuous as the native signed aim angle crosses +/- pi.
+      const packRoll=nativePackFrame&&stance&&stance.roll?(stance.roll.delta||0)*(stance.roll.amount||0):0;
+      const co=Math.cos(packRoll),si=Math.sin(packRoll);
+      const packAxes={x:add(mul(packPosture.x,co),mul(packPosture.y,si)),
+        y:sub(mul(packPosture.y,co),mul(packPosture.x,si)),z:packPosture.z};
+      const packCamera=nativePackFrame?(stance?Number(stance.size)||1:1):
+        Math.max(.5,Math.min(1.25,(Number(p.headRadius)||5.5)/5.5));
+      const packScale=17*packCamera;
+      let sourceFront=.275;
+      const vertices=assetMeshes&&assetMeshes.jetpack&&assetMeshes.jetpack.positions;
+      if(vertices){sourceFront=-Infinity;for(let i=0;i<vertices.length;i+=3)sourceFront=Math.max(sourceFront,vertices[i]);}
+      const backNormal=mul(packAxes.x,-1);
+      let backRadius=0;
+      // The native torso deliberately narrows in a side roll. Find its actual
+      // rear surface along this posterior direction, so the rigid pack stays
+      // joined to the shirt instead of floating beyond that thinner profile.
+      for(const part of parts)if(['torso','armor','coat'].includes(part.part)) {
+        const mesh=assetMeshes&&assetMeshes[part.mesh],m=part.matrix;
+        if(!mesh)continue;
+        for(let i=0;i<mesh.positions.length;i+=3) {
+          const x=mesh.positions[i],y=mesh.positions[i+1],z=mesh.positions[i+2];
+          const dx=m[0]*x+m[4]*y+m[8]*z+m[12]-p.chest.x,
+            dy=m[1]*x+m[5]*y+m[9]*z+m[13]-p.chest.y,
+            dz=m[2]*x+m[6]*y+m[10]*z+m[14]-p.chest.z;
+          backRadius=Math.max(backRadius,dx*backNormal.x+dy*backNormal.y+dz*backNormal.z);
+        }
+      }
+      if(!(backRadius>0))backRadius=nativePackFrame?
+        bw*(typeof TORSO_DEPTH==='number'?TORSO_DEPTH:.84)*.5*packCamera:torsoDepth;
+      const mount=add(p.chest,mul(backNormal,backRadius));
+      // A small, fixed overlap joins the straps to the shirt; the rest of the
+      // model stays outside the back, including its full prone depth.
+      const packCenter=add(mount,mul(backNormal,sourceFront*packScale-1.5*packCamera));
+      addPart('jetpack',[87,94,104],M.matrix(packCenter,packAxes.x,packAxes.y,packAxes.z,
+        packScale,packScale,packScale),'jetpack');
+      sockets.jetpackMount=mount;sockets.jetpackCenter=packCenter;
+      p={...p,jetpack:{center:packCenter,mount,backNormal,spine:packAxes.z,roll:packRoll,scale:packScale}};
+    }
   }
   // Socket positions are actor-local, never absolute world coordinates. The
   // forward muzzle vertices of exported weapons are anchored at these exact
@@ -463,7 +555,36 @@ function player3DPose(actor, options = {}) {
       const sourceMaterial=meshes&&meshes[name]&&meshes[name].material;
       const sourceColor=typeof PLAYER3D_ASSET!=='undefined'&&PLAYER3D_ASSET.palette&&PLAYER3D_ASSET.palette[sourceMaterial];
       const weaponColor=sourceColor?sourceColor.slice(0,3).map(x=>x*255):sourceMaterial==='wood'?palette.wood:palette.steel;
-      addPart(name,weaponColor,M.matrix(center,axis,side,upAxis,length,length,length),tag);
+      const weaponMatrix=M.matrix(center,axis,side,upAxis,length,length,length);
+      addPart(name,weaponColor,weaponMatrix,tag);
+      // The front hand supports a long gun from below. Keep the original
+      // authored XY grip and lower only its real depth; draw order cannot
+      // enforce this when the meshes share a depth buffer.
+      if(!record.index&&!action&&['rifle','shotgun','particle_beam','rocket','coach_gun'].includes(name)&&
+          safe(()=>weaponHands(c.currentWeapon)===2,false)&&meshes&&meshes[name]){
+        const support=arms.find(a=>a.side===-1)||arms[0],palm=parts.find(part=>part.part==='hand_left');
+        if(support&&palm&&meshes[palm.mesh]){
+          const handSurface=player3DProjectedSupportMesh(meshes[palm.mesh],palm.matrix);
+          const gunSurface=player3DProjectedSupportMesh(meshes[name],weaponMatrix);
+          const underside=player3DSupportUnderside(gunSurface,handSurface.bounds);
+          const drop=Number.isFinite(underside)?Math.min(0,underside-handSurface.bounds[5]-.12):0;
+          if(drop<0){
+            const wrist=support.fist||support.hand;
+            wrist.z+=drop;support.elbow.z+=drop*.45;palm.matrix[14]+=drop;
+            if(sockets.leftHand)sockets.leftHand.z=wrist.z;
+            if(sockets.leftElbow)sockets.leftElbow.z=support.elbow.z;
+            const upper=parts.find(part=>part.part==='upper_arm_left'&&part.mesh==='upper_arm');
+            const fore=parts.find(part=>part.part==='forearm_left'&&part.mesh==='forearm');
+            if(upper){const width=(support.widths?support.widths[0]:R.upperW)*widthScale;
+              upper.matrix=M.segment(support.shoulder,support.elbow,width,width);}
+            if(fore){const width=R.foreW*(support.widths?support.widths[0]/R.upperW:1)*widthScale;
+              fore.matrix=M.segment(support.elbow,wrist,width,width);}
+            for(const joint of parts)if(joint.part==='upper_arm_left'&&joint.mesh==='joint')joint.matrix[14]=support.elbow.z;
+          }
+          const supportedHand=support.fist||support.hand;
+          sockets.supportGrip=point(supportedHand.x,supportedHand.y,supportedHand.z);
+        }
+      }
       if(name==='bow') {sockets.bowGrip=point(hand.x,hand.y,hand.z);sockets.bowString=sockets.rightHand||hand;}
       sockets[record.index?'secondaryMuzzle':'muzzle']=muzzle;sockets[record.index?'secondaryGrip':'primaryGrip']=point(hand.x,hand.y,hand.z);
     }

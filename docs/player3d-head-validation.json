@@ -1,5 +1,5 @@
 {
-  "headScale": 1.1,
+  "headScale": 1,
   "shape": "unit sphere with surface facial marks; no ears or nose",
   "geometryAndPoseChecks": 258,
   "corpseLifetimeAndWorldOriginChecks": 23,
@@ -235,5 +235,7 @@
     "programsAfter": 1
   },
   "preview": "previews/player3d-head-lighting.png",
-  "physicalPhonePerformanceMeasured": false
+  "physicalPhonePerformanceMeasured": false,
+  "projectedDiameter": 11,
+  "reference": "native standard pistol player"
 }

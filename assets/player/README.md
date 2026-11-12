@@ -7,7 +7,8 @@ with a red shirt, blue trousers and dark boots.
 
 The head has a spherical silhouette with no ears or projecting nose. Small
 eye, eyebrow, and mouth marks stay within the sphere surface. The assembled
-source uses a uniform head scale, matching the round head used on fallen bodies.
+source uses a uniform head scale calibrated to the standard pistol player's
+11-unit head diameter, matching the round head used on fallen bodies.
 
 `player.glb` contains the visible base character, skeleton, animation and sockets.
 Optional equipment remains available in the `.blend` and runtime mesh library;

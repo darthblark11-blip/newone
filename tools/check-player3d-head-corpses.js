@@ -83,7 +83,7 @@ probe("drawPlayer3DFallenHead(__headTarget,{isPlayer:true,eType:'NORMAL'},null,1
 const part=captures[0].s.parts.find(p=>p.part==='head');
 const length=i=>Math.hypot(part.matrix[i],part.matrix[i+1],part.matrix[i+2]);
 ok(Math.abs(length(0)-length(4))<1e-6&&Math.abs(length(0)-length(8))<1e-6,'detached head is spherical');
-ok(Math.abs(length(0)-6.05)<.001,'detached head is ten percent larger');
+ok(Math.abs(length(0)-5.5)<.001,'detached head uses the standard pistol reference radius');
 const gibs=P("player3DCorpseGibParts({isCharred:false},[{type:'skull',sz:8},{type:'skull_frag',sz:5}])");
 for(const g of gibs){const m=g.matrix,scale=i=>Math.hypot(m[i],m[i+1],m[i+2]);
  ok(Math.abs(scale(0)-scale(4))<1e-6&&Math.abs(scale(0)-scale(8))<1e-6,'skull part has no egg-shaped axis');}

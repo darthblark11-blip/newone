@@ -30,7 +30,7 @@ for(const stance of ['STAND','CROUCH','PRONE'])for(const angle of [0,.8,Math.PI/
  probe(`resetActorStance(player,${JSON.stringify(stance)});player.aimAngle=${angle};player.moveAngle=${angle+1};frameCount++;`);
  const pose=P('player3DPose(player)'),part=pose.parts.find(p=>p.part==='head');sphere(part,stance+'/'+angle);
  const r=Math.hypot(part.matrix[0],part.matrix[1],part.matrix[2]);
- ok(Math.abs(r-pose.pose.headProjectedDiameter*.5*1.1)<.00002,stance+' head is ten percent larger');
+ ok(Math.abs(r-pose.pose.headProjectedDiameter*.5)<.00002,stance+' head matches the standard pistol player size');
  ok(pose.worldOrigin.x===120&&pose.worldOrigin.y===160,'lighting snapshot retains true actor origin');
 }
 probe("resetActorStance(player,'STAND');boxingEnter(player,[],'WORLD');");

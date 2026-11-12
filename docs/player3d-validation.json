@@ -91,14 +91,14 @@
     "bufferCreates": 105,
     "programCreates": 1,
     "stainDraws": 1,
-    "lastDrawMs": 2.5,
-    "totalDrawMs": 38.300000010058284
+    "lastDrawMs": 0.09999999962747097,
+    "totalDrawMs": 62.6999999973923
   },
   "cpuMs": {
-    "median": 0.5,
+    "median": 0.30000000074505806,
     "p95": 1.900000000372529
   },
-  "sourceBytes": 5243526,
+  "sourceBytes": 5250975,
   "world": {
     "meshDraws": 3,
     "mesh": {
@@ -119,16 +119,16 @@
       "bufferCreates": 105,
       "programCreates": 1,
       "stainDraws": 0,
-      "lastDrawMs": 8.400000000372529,
-      "totalDrawMs": 12.300000000745058,
+      "lastDrawMs": 0.30000000074505806,
+      "totalDrawMs": 6.099999999627471,
       "lighting": {
-        "sunWeight": 0.5352108389525335,
+        "sunWeight": 0.5351936583209546,
         "localWeight": 0,
-        "contrast": 0.9731106162773336,
+        "contrast": 0.9730793787653719,
         "direction": [
-          -0.1772504597902298,
-          -0.7670320272445679,
-          0.6166394352912903
+          -0.17730486392974854,
+          -0.7670215368270874,
+          0.6166367530822754
         ],
         "localSources": 0
       }
@@ -151,26 +151,31 @@
     "corpseAdapter": 77,
     "nativePoseFidelity": 6869,
     "sphericalHead": 258,
-    "corpseLightingLifetime": 23
+    "corpseLightingLifetime": 23,
+    "supportHandDepthAndPurity": 9639,
+    "rigidJetpackAttachmentAndMotion": 2265
   },
-  "existingChecksPassed": [
-    "check-stance-hits.js (142)",
-    "check-boxing-combat.js (49)",
-    "check-player-footwear.js (27)",
-    "check-cover-player-fire.js (31)",
-    "check-frontier-player-knockout.js (32)"
-  ],
-  "existingBaselineFailures": [
-    {
-      "test": "check-depth.js",
-      "reason": "run dispatcher source-pattern assertion",
-      "alsoFailsOnUnchangedHead": true
-    },
-    {
-      "test": "check-standing-fluidity.js",
-      "reason": "shallow backward stop assertion",
-      "alsoFailsOnUnchangedHead": true
-    }
-  ],
+  "previousBaseline": {
+    "commit": "6417b57",
+    "existingChecksPassed": [
+      "check-stance-hits.js (142)",
+      "check-boxing-combat.js (49)",
+      "check-player-footwear.js (27)",
+      "check-cover-player-fire.js (31)",
+      "check-frontier-player-knockout.js (32)"
+    ],
+    "existingBaselineFailures": [
+      {
+        "test": "check-depth.js",
+        "reason": "run dispatcher source-pattern assertion",
+        "alsoFailsOnUnchangedHead": true
+      },
+      {
+        "test": "check-standing-fluidity.js",
+        "reason": "shallow backward stop assertion",
+        "alsoFailsOnUnchangedHead": true
+      }
+    ]
+  },
   "physicalPhonePerformanceMeasured": false
 }

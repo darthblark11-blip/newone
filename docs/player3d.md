@@ -36,8 +36,8 @@ renderer call never updates the simulation.
 
 The head mesh is spherical with no ears or projecting nose. It keeps the small
 surface facial marks, uses uniform XYZ scale in living and corpse poses, and is
-intentionally 10% larger than the original projected head. Head centers and the
-native gameplay hit geometry remain unchanged.
+calibrated to the standard pistol player's original 11-unit projected diameter.
+Head centers and the native gameplay hit geometry remain unchanged.
 
 Standing, crouched, and prone mesh landmarks and projected proportions follow
 the original painter. Chest and pelvis retain independent native headings;
@@ -48,6 +48,14 @@ calling other pose helpers: it returns shared scratch data.
 The rifle, shotgun, and particle accelerator use the original game's authored
 solids and grip/muzzle coordinates. `node tools/extract-player3d-weapons.cjs`
 updates their Blender input when the native weapon art changes.
+The support palm sits below the posed long-gun mesh wherever their projections
+overlap. The palm and adjacent arm joints change depth while retaining their
+native XY positions, so aiming and muzzle placement stay consistent.
+
+The jetpack uses a rigid, uniformly scaled transform attached to the chest's
+posterior surface. It follows the anatomical back through turns, moving dives,
+and prone spine rolls, including the signed-angle wrap, without stretching its
+tanks or disappearing inside the torso.
 
 `Player3D.draw(snapshot, context, options)` immediately copies a transparent,
 depth-tested mesh render into the supplied 2D context. Its current transform,
@@ -88,6 +96,9 @@ node tools/check-player3d-head.js
 node tools/check-player3d-head-corpses.js
 node tools/check-player3d-lighting.cjs
 node tools/check-player3d-fidelity.js
+node tools/check-player3d-support-hand.js
+node tools/check-player3d-jetpack.js
+node tools/check-player3d-equipment-browser.cjs
 node tools/check-player3d-browser.cjs
 node tools/visual-player3d-fidelity.cjs
 ```
@@ -98,6 +109,14 @@ independent headings, prone orientation, and stop easing. The visual tool writes
 matched original-2D / first-3D / revised-3D images and an original-versus-revised
 motion clip with turning and stance transitions. Set `PLAYER3D_FIDELITY_OUT` to
 select its output directory or `PLAYER3D_FIDELITY_VIDEO=0` to skip video.
+
+The equipment checks verify support-hand mesh depth and unchanged native grips,
+jetpack rigidity and attachment, and real controller-driven dive transitions.
+The equipment browser check also compares actual GPU occlusion and visible pack
+pixels, and writes [a pose sheet](previews/player3d-equipment.png) and
+[a motion preview](previews/player3d-equipment-motion.mp4). Set
+`PLAYER3D_EQUIPMENT_OUT` to change its default `/tmp/player3d-equipment-qa` output
+directory. The stored results are in `player3d-equipment-validation.json`.
 
 The browser check uses locally installed p5, Chromium, and Playwright. Set
 `PLAYER3D_P5` or `VIS_CHROME` for other installations, and `PLAYER3D_OUT` to change
