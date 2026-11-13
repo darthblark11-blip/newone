@@ -68591,19 +68591,21 @@ void main() {
       const x=bounds[0]-pad,y=bounds[1]-pad,w=Math.max(.1,bounds[3]-bounds[0]+pad*2),h=Math.max(.1,bounds[4]-bounds[1]+pad*2);
       const limit=Math.max(32,Math.min(2048,api.maxSize||1024));
       const pixelW=Math.max(16,Math.min(limit,Math.ceil(w*sx*quality))),pixelH=Math.max(16,Math.min(limit,Math.ceil(h*sy*quality)));
-      // Grow a bucketed backing canvas, but render/clear only the used rectangle.
-      // Alternating a standing actor and wide corpse never reallocates it per draw.
+      // Keep bucketed allocation when alternating wide/narrow actors. Clear
+      // the whole backing buffer: Canvas2D filtering can sample outside the
+      // copied source rectangle and turn a previous actor into an edge line.
       let backingW=canvas.width,backingH=canvas.height;
       while(backingW<pixelW)backingW*=2;while(backingH<pixelH)backingH*=2;
       if(backingW!==canvas.width||backingH!==canvas.height) {
         canvas.width=backingW;canvas.height=backingH;stats.resizes++;invalidatePipeline();
       }
       const callsBefore=stats.gpuDrawCalls,submitStarted=now();
-      gl.useProgram(program);gl.enable(gl.SCISSOR_TEST);
-      gl.viewport(0,canvas.height-pixelH,pixelW,pixelH);gl.scissor(0,canvas.height-pixelH,pixelW,pixelH);
+      gl.useProgram(program);gl.disable(gl.SCISSOR_TEST);
+      gl.viewport(0,canvas.height-pixelH,pixelW,pixelH);
       gl.colorMask(true,true,true,true);gl.depthMask(true);gl.stencilMask(255);
       gl.clearColor(0,0,0,0);gl.clearDepth(1);gl.clearStencil(0);
       gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT|gl.STENCIL_BUFFER_BIT);
+      gl.enable(gl.SCISSOR_TEST);gl.scissor(0,canvas.height-pixelH,pixelW,pixelH);
       gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);gl.enable(gl.CULL_FACE);
       gl.enable(gl.BLEND);gl.blendEquation(gl.FUNC_ADD);
       gl.blendFuncSeparate(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);

@@ -30,6 +30,13 @@ default-framebuffer MSAA resolve from each character copy while retaining the
 model geometry, shading, depth, stencil, blood and animation. No renderer-name
 heuristic disables Vulkan or downgrades the models.
 
+The shared character canvas keeps a bucketed allocation, but clears its whole
+backing buffer before every actor. Clearing only the current actor rectangle
+left older pixels just beyond the source crop; Canvas2D image filtering could
+sample them and create a thin line beside or beneath a character. Full-buffer
+clearing removes that edge bleed across zoom levels and smoothing modes
+without extra GPU contexts, copies, readbacks or mesh uploads.
+
 After initialization, backing-buffer growth or context restoration, the first
 visible character draw checks WebGL errors, framebuffer completeness, GPU
 alpha pixels and the same WebGL canvas imported into a scratch Canvas2D
@@ -150,6 +157,7 @@ node tools/check-graphics-context.js
 node tools/check-graphics-context-browser.cjs
 node tools/check-graphics-launcher-browser.cjs
 node tools/check-player3d-transfer-browser.cjs
+node tools/check-player3d-crop-browser.cjs
 node tools/check-player3d-browser.cjs
 python3 tools/build-player3d.py --check
 ```
