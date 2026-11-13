@@ -75,7 +75,7 @@ for(const [type,shirt,pants] of [['NORMAL',[220,200,20],[30,30,30]],['FEMALE_PIS
  ok(same(pose.palette.shirt,shirt)&&same(pose.palette.pants,pants),type+' retains its uniform colors');
  if(type==='ARMORED_STANDARD'){
   ok(pose.parts.some(p=>p.part==='armor'&&same(p.color,[100,104,112])),'standard armored enemy wears steel plate');
-  ok(pose.parts.some(p=>p.part==='helmet'&&same(p.color,[43,49,58])),'healthy standard armor wears integral helmet');
+  ok(pose.parts.some(p=>p.part==='helmet'&&same(p.color,[64,77,73])),'healthy standard armor wears an open army helmet');
   probe('enemy.hp=50');ok(!P('player3DPose(enemy)').parts.some(p=>p.part==='helmet'),'standard helmet disappears at native hp50 threshold');
  }
  if(type==='BANDIT'){
@@ -83,7 +83,11 @@ for(const [type,shirt,pants] of [['NORMAL',[220,200,20],[30,30,30]],['FEMALE_PIS
   ok(pose.parts.some(p=>p.part==='vest'&&same(p.color,[58,48,44])),'bandit keeps dark duster identity');
   ok(pose.parts.some(p=>p.part==='bandana'&&same(p.color,P('Array.from(enemy.kerchiefCol.levels).slice(0,3)'))),'bandit keeps its kerchief color');
  }
- if(type==='NM0_GREY_FATIGUE'||type==='MILITARY_NEUTRAL')ok(pose.parts.some(p=>p.part==='headwear'&&same(p.color,shirt)),'military helmet matches native grey/tan color');
+ if(type==='NM0_GREY_FATIGUE'){
+  ok(pose.parts.some(p=>p.part==='headwear'&&same(p.color,[112,124,118])),'grey infantry helmet contrasts with its fatigues');
+  ok(pose.parts.some(p=>p.mesh==='army_webbing'&&same(p.color,[68,77,83])),'grey infantry wears separate charcoal field webbing');
+ }
+ if(type==='MILITARY_NEUTRAL')ok(pose.parts.some(p=>p.part==='headwear'&&same(p.color,shirt)),'military helmet matches native tan color');
 }
 // Player inventory choices must never place a shovel/blade in an NPC hand.
 fresh('NORMAL','PISTOL',.7);probe("window.shovelOwned=true;setMeleeTool('SHOVEL');isCooking=true;");

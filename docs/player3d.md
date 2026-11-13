@@ -50,12 +50,14 @@ surface facial marks, uses uniform XYZ scale in living and corpse poses, and is
 calibrated to the standard pistol player's original 11-unit projected diameter.
 Head centers and the native gameplay hit geometry remain unchanged.
 
-Military and armor helmets use an open hard shell with a separate rim and front
-lip, centered on the head at its uniform radius. The lower face and neck remain
-exposed; the armor visor is a narrow brow window. Hood geometry remains separate.
-See the [helmet comparison](previews/player3d-helmets.png) and the source
-`assets/player/player-headwear-comparison.png`. `player-helmet.glb` exports the
-rigged helmet variant for Blender-compatible editors.
+Military and armor helmets use a compact army shell, rolled rim and short
+brow, centered on the head at its unchanged uniform radius. The front footprint
+leaves visible skin from the actual overhead camera, rather than relying on a
+side-view opening alone. The lower face and neck remain exposed. NM0 helmets
+have no face visor; the player's armor keeps its narrow brow window. Hood
+geometry remains separate. See the [NM0 model comparison](previews/nm0-army-models.png)
+and the source `assets/player/player-headwear-comparison.png`.
+`player-helmet.glb` exports the rigged helmet variant for Blender-compatible editors.
 
 Standing, crouched, and prone mesh landmarks and projected proportions follow
 the original painter. Chest and pelvis retain independent native headings;
@@ -121,6 +123,28 @@ threshold, and bandit clothing follow their own identity. Female hair and
 ponytails retain their authored Canvas detail at the resolved mesh head;
 Molotov carriers hold a green bottle with its wick instead of a firearm.
 
+Grey NM0 rifle infantry now wear field-grey helmets with a contrasting rim,
+charcoal webbing, magazine pouches and dark boots over their grey fatigues.
+Armored pistol soldiers retain their blue underlayer and wear a heavier plate
+carrier, shoulder armor and darker army helmet. Player suit purchases do not
+recolor either NM0 role or place a player visor over their face. The armored
+helmet still disappears at the existing 50-HP damage threshold.
+
+Both equipment meshes are authored in Blender and integrated into the editable
+source and portable `nm0-grey-soldier.glb` / `nm0-armored-soldier.glb` variants.
+The grey role adds one runtime mesh part; the armored role replaces its old vest
+and adds two shoulder caps. Their GPU draw counts increase from 55 to 58 and
+47 to 52 respectively. Mesh buffers remain shared and are not re-uploaded while
+turning or moving. Exact cached unique vertices reduce each kit's CPU fitting
+scan by about 81%, retaining byte-identical transforms.
+
+The [native world comparison](previews/nm0-army-world.png) checks daylight and
+the recording's dawn lighting. A [motion preview](previews/nm0-army-models.mp4)
+shows turns, walking, crouching and reloads at enlarged and gameplay scale.
+The checks retain the 5.5-unit head radius, original joints, weapon grips and
+muzzles, and existing enemy prone, injured and corpse painters.
+Results are recorded in [nm0-model-validation.json](nm0-model-validation.json).
+
 `enemy3DLivingEligible` rejects corpses, injured and prone actors (including
 their drop/get-up transition), stunned/knocked-out actors, boxing/melee states,
 mounted actors, neutral/friendly people, civilians, and specialist/nonhuman
@@ -147,6 +171,8 @@ node tools/check-player3d-head.js
 node tools/check-player3d-head-corpses.js
 node tools/check-player3d-helmets.js
 node tools/check-player3d-helmets-browser.cjs
+node tools/check-player3d-fit-cache.js
+node tools/check-nm0-models-browser.cjs
 node tools/check-player3d-view.js
 node tools/check-player3d-view-dispatch.js
 node tools/check-player3d-projectile-view.js

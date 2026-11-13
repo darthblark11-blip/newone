@@ -49,6 +49,25 @@ const Player3DMath = (() => {
   return {clamp,point,add,sub,mul,dot,cross,norm,mix,rotate,matrix,frame,postureFrame,segment,elbow,color};
 })();
 
+// Blender's compact export repeats corners for triangle normals/materials.
+// Footprint fitting needs the exact XYZ positions once, not those duplicates
+// on every actor. Keep all distinct points, including non-AABB extrema, so
+// every rotated fit is identical to scanning the complete authored geometry.
+const _player3DFitVertices = new WeakMap();
+function player3DFitVertices(mesh) {
+  if(!mesh)return null;
+  let vertices=_player3DFitVertices.get(mesh);
+  if(vertices)return vertices;
+  const positions=mesh.positions;if(!positions)return null;
+  const unique=[],seen=new Set();
+  for(let i=0;i<positions.length;i+=3){
+    const x=positions[i],y=positions[i+1],z=positions[i+2];
+    const key=[x,y,z].map(v=>Object.is(v,-0)?'-0':String(v)).join(',');
+    if(seen.has(key))continue;seen.add(key);unique.push(x,y,z);
+  }
+  vertices=new Float64Array(unique);_player3DFitVertices.set(mesh,vertices);return vertices;
+}
+
 // Reuse CPU projection buffers for the one support-hand contact solve. This
 // does not allocate or upload GPU geometry and never changes simulation data.
 const _player3DSupportProjection = new WeakMap();
@@ -121,13 +140,20 @@ function player3DPose(actor, options = {}) {
   const palette={skin:M.color(identity.skinCol||c.skinCol,[235,180,140]),shirt:M.color(identity.shirtCol||c.shirtCol,[200,30,30]),
     pants:M.color(identity.pantsCol||c.pantsCol,[30,80,180]),steel:[59,68,79],wood:[128,77,37],gold:[172,136,61]};
   if(!c.isPlayer&&c.eType==='BANDIT'&&!identity.skinCol&&!c.skinCol)palette.skin=[214,168,132];
-  const armored=!!identity.explosiveArmor,chemist=!armored&&!!identity.chemistSuit,ninja=!armored&&!chemist&&!!identity.ninjaSuit,cowboy=!armored&&!chemist&&!ninja&&!!identity.cowboySuit;
+  const armyInfantry=!c.isPlayer&&c.eType==='NM0_GREY_FATIGUE',armoredGuard=!c.isPlayer&&c.eType==='ARMORED_STANDARD';
+  // NM0 uniforms are faction identity, rather than copies of the player's
+  // equipped suit. Their cloth colors remain visible under separate field kit.
+  const personalSuit=!armyInfantry&&!armoredGuard;
+  const armored=personalSuit&&!!identity.explosiveArmor,chemist=personalSuit&&!armored&&!!identity.chemistSuit,
+    ninja=personalSuit&&!armored&&!chemist&&!!identity.ninjaSuit,cowboy=personalSuit&&!armored&&!chemist&&!ninja&&!!identity.cowboySuit;
   if(armored){palette.shirt=[60,100,40];palette.pants=[139,115,85];}
   else if(chemist){palette.shirt=[238,242,239];palette.pants=[20,22,25];}
   else if(ninja){palette.shirt=[25,25,33];palette.pants=[22,22,29];}
   else if(cowboy){palette.shirt=[219,196,146];palette.pants=[61,93,118];}
   if(identity.isCharred||c.isCharred)palette.skin=[50,40,40];
   palette.boot=palette.pants.map(x=>x*.55);
+  if(armyInfantry)palette.boot=[31,36,42];
+  else if(armoredGuard)palette.boot=[24,29,36];
   const R=safe(()=>figureRig(bw,bh),{upper:11.4,fore:10.1,hand:7.6,upperW:8.4,foreW:6.72,thigh:15.5,shin:15.5,foot:8.4,thighW:9.6,shinW:7.36,TL:23.3,TW:16.1});
   const low=safe(()=>actorStancePose(c),{crouch:0,prone:0,scaleX:1}),floor=clamp(low.prone),crouch=clamp(low.crouch);
   const cover=safe(()=>stanceCoverPoseActive(c),false);
@@ -413,7 +439,7 @@ function player3DPose(actor, options = {}) {
   const flashColor=kind==='BOXING'?[242,217,160]:[255,255,255];
   const addPart=(mesh,color,matrix,part)=>{
     if(!selected(part))return;
-    const flash=hitFlash&&['torso','vest','coat','upper_arm','forearm','joint'].includes(mesh);
+    const flash=hitFlash&&['torso','vest','army_webbing','army_platecarrier','coat','upper_arm','forearm','joint'].includes(mesh);
     parts.push({mesh,color:options.skeleton?[240,244,238]:flash?flashColor:color,matrix,part});
   };
   const oval=(mesh,pos,sx,sy,sz,color,tag,axes=basis)=>addPart(mesh,color,M.matrix(pos,axes.x,axes.y,axes.z,sx,sy,sz),tag);
@@ -424,7 +450,7 @@ function player3DPose(actor, options = {}) {
   // authored silhouette instead of deriving chest proportions from head/hips.
   const fittedOval=(mesh,pos,length,width,depth,color,tag,axes,heading)=>{
     const raw=M.matrix(pos,axes.x,axes.y,axes.z,length*.5,width*.5,depth);
-    const vertices=assetMeshes&&assetMeshes[mesh]&&assetMeshes[mesh].positions;
+    const vertices=player3DFitVertices(assetMeshes&&assetMeshes[mesh]);
     const co=Math.cos(heading),si=Math.sin(heading);
     let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity;
     const scan=(vx,vy,vz)=>{
@@ -464,6 +490,12 @@ function player3DPose(actor, options = {}) {
     if(!shoulder||!elbow||!hand)return;
     sockets[tag+'Shoulder']=point(shoulder.x,shoulder.y,shoulder.z);sockets[tag+'Elbow']=point(elbow.x,elbow.y,elbow.z);sockets[tag+'Hand']=point(hand.x,hand.y,hand.z);sockets[tag+'Fist']=sockets[tag+'Hand'];
     bone('upper_arm',shoulder,elbow,arm.widths?arm.widths[0]:R.upperW,palette.shirt,'upper_arm_'+tag);
+    // Short rigid shoulder caps make the armored pistol role read heavier
+    // without altering the authored shoulder, elbow or wrist positions.
+    if(armoredGuard&&!options.skeleton){
+      const sleeve=arm.widths?arm.widths[0]:R.upperW;
+      bone('upper_arm',shoulder,mix(shoulder,elbow,.38),sleeve*1.16,[100,104,112],'armor_shoulder_'+tag,sleeve*1.08);
+    }
     bone('forearm',elbow,hand,R.foreW*(arm.widths?arm.widths[0]/R.upperW:1),palette.shirt,'forearm_'+tag);
     if(assetMeshes&&assetMeshes.joint&&!options.skeleton)oval('joint',elbow,(arm.widths?arm.widths[1]:(R.upperW+R.foreW)*.5)*.5*widthScale,(arm.widths?arm.widths[1]:(R.upperW+R.foreW)*.5)*.5*widthScale,(arm.widths?arm.widths[1]:(R.upperW+R.foreW)*.5)*.5*widthScale,palette.shirt,'upper_arm_'+tag,M.postureFrame(0));
     if(nativeFrames)fittedOval('hand',hand,(arm.handDiameter||R.hand)*widthScale,(arm.handDiameter||R.hand)*widthScale,R.hand*.42*widthScale,chemist&&side<0?[177,184,194]:palette.skin,'hand_'+tag,M.postureFrame(p.chestHeading),p.chestHeading);
@@ -490,8 +522,22 @@ function player3DPose(actor, options = {}) {
     // head. Mount it directly in the head's frame at the same uniform radius.
     // The old inflated ellipsoid and +2 lift pulled its rim around the whole
     // face/neck, which read as cloth and obscured the exposed skin underneath.
-    const helmet=(color,tag='headwear')=>oval('helmet',p.head,headRadius,headRadius,headRadius,color,tag,headBasis);
-    const armoredGuard=!c.isPlayer&&c.eType==='ARMORED_STANDARD';
+    const helmet=(color,tag='headwear',trim=null)=>{
+      const start=parts.length;
+      oval('helmet',p.head,headRadius,headRadius,headRadius,color,tag,headBasis);
+      if(trim&&parts.length>start)parts[parts.length-1].materials={armor:color.map(x=>x/255),metal:trim.map(x=>x/255)};
+    };
+    // Straps, plate panels and pouches are joined in Blender so a soldier's
+    // complete kit adds one part, with two shared material batches at most.
+    const fieldKit=(mesh,color,trim,tag,bulk)=>{
+      const name=assetMeshes&&assetMeshes[mesh]?mesh:'vest',start=parts.length;
+      if(nativeFrames)fittedOval(name,p.chest,p.torsoProjectedLength*.98,p.torsoProjectedWidth*.98,torsoLength*bulk,color,tag,basis,p.chestHeading);
+      else oval(name,p.chest,torsoDepth*.98,torsoWidth*.98,torsoLength*bulk,color,tag);
+      if(parts.length>start){
+        const part=parts[parts.length-1];
+        part.materials={armor:part.color.map(x=>x/255),metal:trim.map(x=>x/255)};
+      }
+    };
     if(armored){
       oval('vest',p.chest,torsoDepth*1.06,torsoWidth*1.04,torsoLength*1.03,[91,104,76],'armor');
       if(!armoredGuard||c.hp>50){
@@ -507,10 +553,13 @@ function player3DPose(actor, options = {}) {
     else if(chemist){if(nativeFrames)fittedOval('coat',p.chest,p.torsoProjectedLength,p.torsoProjectedWidth,torsoLength,palette.shirt,'coat',basis,p.chestHeading);else oval('coat',p.chest,torsoDepth*1.02,torsoWidth*1.02,torsoLength*1.07,palette.shirt,'coat');}
     else if(ninja)oval('hood',p.head,6.6,6.8,7.4,[22,23,30],'headwear');
     else if(cowboy)oval('cowboy_hat',add(p.head,mul(basis.z,4)),6.2,6.5,4.5,[108,80,46],'headwear');
-    else if(!c.isPlayer&&c.eType==='ARMORED_STANDARD') {
-      if(nativeFrames)fittedOval('vest',p.chest,p.torsoProjectedLength*.94,p.torsoProjectedWidth*.90,torsoLength*1.24,[100,104,112],'armor',basis,p.chestHeading);
-      else oval('vest',p.chest,torsoDepth*.94,torsoWidth*.90,torsoLength*1.24,[100,104,112],'armor');
-      if(c.hp>50)helmet([43,49,58],'helmet');
+    else if(armoredGuard) {
+      fieldKit('army_platecarrier',[100,104,112],[43,49,58],'armor',1.17);
+      if(c.hp>50)helmet([64,77,73],'helmet',[31,39,35]);
+    }
+    else if(armyInfantry){
+      fieldKit('army_webbing',[68,77,83],[43,50,55],'vest',1.04);
+      helmet([112,124,118],'headwear',[47,57,52]);
     }
     else {
       const hat=safe(()=>headwearOf(identity),null);
@@ -701,7 +750,7 @@ function player3DPose(actor, options = {}) {
   }
   let minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
   for(const part of parts) {
-    const a=part.matrix,unit=['head','hand','torso','pelvis','helmet','hood','cowboy_hat','vest','coat','jetpack','visor','grenade','flask','joint'].includes(part.mesh)?1:.5;
+    const a=part.matrix,unit=['head','hand','torso','pelvis','helmet','hood','cowboy_hat','vest','army_webbing','army_platecarrier','coat','jetpack','visor','grenade','flask','joint'].includes(part.mesh)?1:.5;
     const rx=(Math.abs(a[0])+Math.abs(a[4])+Math.abs(a[8]))*unit+1.5,ry=(Math.abs(a[1])+Math.abs(a[5])+Math.abs(a[9]))*unit+1.5;
     minx=Math.min(minx,a[12]-rx);maxx=Math.max(maxx,a[12]+rx);miny=Math.min(miny,a[13]-ry);maxy=Math.max(maxy,a[13]+ry);
   }

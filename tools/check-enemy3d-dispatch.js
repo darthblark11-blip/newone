@@ -106,6 +106,19 @@ check(P(`(()=>{const c=new Corpse(0,0,0,0,meshEnemy.shirtCol,meshEnemy.pantsCol,
  'native military uniform assignment reaches frozen corpse colors');
 probe('explosiveArmorUnlocked=false;');
 
+// NM0 faction kit does not inherit the player's purchased suit. Drawing must
+// preserve the source colors that are later frozen into a native corpse.
+for(const type of ['NM0_GREY_FATIGUE','ARMORED_STANDARD']){
+ fresh(type,'meshEnemy.isMilitary=true;explosiveArmorUnlocked=true');
+ const colors=P('JSON.stringify([meshEnemy.shirtCol.levels,meshEnemy.pantsCol.levels])');
+ const result=shown(type+' independent army uniform');
+ check(P('JSON.stringify([meshEnemy.shirtCol.levels,meshEnemy.pantsCol.levels])')===colors,type+' source colors survive player armor');
+ check(result.snapshot.parts.some(p=>p.mesh===(type==='NM0_GREY_FATIGUE'?'army_webbing':'army_platecarrier')),
+  type+' retains its authored faction kit');
+ check(!result.snapshot.parts.some(p=>p.mesh==='visor'),type+' does not inherit the player face visor');
+}
+probe('explosiveArmorUnlocked=false;');
+
 // Native overlays remain outside the mesh, and no enemy receives a player laser.
 fresh('NORMAL','meshEnemy.reloadTimer=45;meshEnemy.hitFlash=3');
 const oldArc=ctx.arc,oldLaser=ctx.tracePlayerAimLaser,oldTriangle=ctx.triangle,oldBegin=ctx.beginShape;

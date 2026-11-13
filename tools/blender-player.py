@@ -5,6 +5,8 @@ Run: blender --background --factory-startup --python tools/blender-player.py
 Options after --: --skip-renders, --validate-only, --export-existing
 Export manual edits without rebuilding:
   blender --background assets/player/player.blend --python tools/blender-player.py -- --export-existing
+Refresh just the portable soldier variants and their previews:
+  blender --background assets/player/player.blend --python tools/blender-player.py -- --export-existing --soldier-variants-only
 Runtime meshes are articulated parts; the source and GLB also contain a real
 armature, deformation weights, named sockets, equipment, and a sample idle clip.
 """
@@ -29,6 +31,13 @@ PALETTE = {
     'cowboy': [.86, .77, .57], 'hat': [.31, .20, .12],
     'glass': [.12, .57, .63], 'gold': [.79, .55, .15],
     'energy': [.22, .80, .90], 'blood': [.43, .035, .045],
+    'nm0_cloth': [170/255,175/255,180/255], 'nm0_trousers': [100/255,105/255,110/255],
+    'nm0_webbing': [68/255,77/255,83/255], 'nm0_trim': [43/255,50/255,55/255],
+    'nm0_helmet': [112/255,124/255,118/255], 'nm0_helmet_trim': [47/255,57/255,52/255],
+    'nm0_plate': [100/255,104/255,112/255], 'nm0_plate_trim': [43/255,49/255,58/255],
+    'nm0_heavy_helmet': [64/255,77/255,73/255], 'nm0_heavy_helmet_trim': [31/255,39/255,35/255],
+    'nm0_heavy_cloth': [40/255,80/255,200/255], 'nm0_heavy_trousers': [30/255,30/255,30/255],
+    'nm0_boots': [31/255,36/255,42/255], 'nm0_heavy_boots': [24/255,29/255,36/255],
 }
 MATERIALS = {}
 LIBRARY = {}
@@ -124,6 +133,10 @@ class Geometry:
 
 def toon_material(name, rgb):
     material=bpy.data.materials.new(name)
+    # Portable soldier variants swap these palette materials temporarily.
+    # Keep them editable after reopening the .blend, even when hidden gear
+    # is currently using the player's default outfit instead.
+    material.use_fake_user=True
     material.diffuse_color=(*rgb,1)
     material.use_nodes=True
     nodes=material.node_tree.nodes;nodes.clear()
@@ -158,19 +171,22 @@ def mesh_object(name, geometry, collection):
 
 
 def rigid_helmet_geometry():
-    """A thin, open-bottom shell, not a second full head/cowl.
+    """Compact Army helmet with a high-cut brow and exposed human face.
 
-    Local coordinates match the unit head: +X is the exposed face. The brow
-    ends above the eyes; the rear rim rises at its center to clear the nape.
-    Separate planar rim/lip surfaces keep the silhouette visibly rigid.
+    +X is the face. The old low, projecting peak blanketed the face from the
+    game's elevated camera even though its eye-level opening was technically
+    clear. A short brow, raised temples and flatter crown keep skin visible
+    from both camera heights, while the rolled edge reads as a rigid shell.
     """
-    geometry=Geometry();sides=24;cx=-.06;rx=1.09;ry=1.08;top=1.20
+    geometry=Geometry();sides=20;cx=-.075;rx=1.055;ry=1.075;top=1.12
 
     def edge(angle):
         facing=math.cos(angle)
-        return .04+.33*max(0,facing)**2-.16*max(0,-facing)**2+.18*max(0,-facing)**12
+        # Army side/back protection stays behind the face, with a visibly
+        # raised forehead and temple opening rather than a circular low skirt.
+        return .29+.34*max(0,facing)**2-.30*max(0,-facing)**2
 
-    profile=[(1.0,0),(.985,.18),(.90,.49),(.73,.76),(.47,.93),(.18,.992)]
+    profile=[(1.0,0),(.96,.26),(.80,.65),(.54,.93),(.22,.997)]
     vertices=[]
     for inner in [False,True]:
         for radius,height in profile:
@@ -178,8 +194,9 @@ def rigid_helmet_geometry():
                 angle=j*math.tau/sides
                 xradius=radius*rx-(.065 if inner else 0)
                 yradius=radius*ry-(.065 if inner else 0)
-                z=edge(angle)+(top-edge(angle))*height-(.055 if inner else 0)
-                vertices.append((cx+xradius*math.cos(angle),yradius*math.sin(angle),z))
+                z=edge(angle)+(top-edge(angle))*height-(.045 if inner else 0)
+                front_cut=.18*radius*max(0,math.cos(angle))**2
+                vertices.append((cx+xradius*math.cos(angle)-front_cut,yradius*math.sin(angle),z))
     count=len(profile)*sides;faces=[]
     for inner in [False,True]:
         offset=count if inner else 0
@@ -188,7 +205,7 @@ def rigid_helmet_geometry():
                 face=(offset+i*sides+j,offset+i*sides+(j+1)%sides,
                       offset+(i+1)*sides+(j+1)%sides,offset+(i+1)*sides+j)
                 faces.append(tuple(reversed(face)) if inner else face)
-        crown=len(vertices);vertices.append((cx,0,top-(.055 if inner else 0)))
+        crown=len(vertices);vertices.append((cx,0,top-(.045 if inner else 0)))
         last=offset+(len(profile)-1)*sides
         for j in range(sides):
             face=(crown,last+j,last+(j+1)%sides)
@@ -200,23 +217,59 @@ def rigid_helmet_geometry():
     geometry.add(vertices,faces,'armor',True)
 
     # Angular rolled edge: four surface strips around the open aperture.
-    band=[(1.055,-.065),(1.055,.025),(.995,.055),(.995,-.085)]
+    band=[(1.045,-.055),(1.045,.020),(.995,.045),(.995,-.070)]
     vertices=[]
     for radius,lift in band:
         for j in range(sides):
             angle=j*math.tau/sides
-            vertices.append((cx+rx*radius*math.cos(angle),ry*radius*math.sin(angle),edge(angle)+lift))
+            front_cut=.18*radius*max(0,math.cos(angle))**2
+            vertices.append((cx+rx*radius*math.cos(angle)-front_cut,ry*radius*math.sin(angle),edge(angle)+lift))
     for i in range(4):
         faces=[(i*sides+j,i*sides+(j+1)%sides,((i+1)%4)*sides+(j+1)%sides,((i+1)%4)*sides+j) for j in range(sides)]
         geometry.add(vertices,faces,'armor' if i==1 else 'metal',False)
 
-    # A short beveled brow peak projects forward; it does not enclose the
-    # face. Its planar top and dark edge read as a helmet at game scale.
-    lip=[(.62,-.79,.31),(1.28,-.57,.27),(1.37,-.31,.25),
-         (1.37,.31,.25),(1.28,.57,.27),(.62,.79,.31)]
-    vertices=lip+[(x,y,z+.095) for x,y,z in lip]
+    # ACH/MICH-style shallow brow: a stiff lip, never a baseball-cap visor.
+    # Its front stays inside the high-angle line of sight to the eye surface.
+    lip=[(.54,-.70,.61),(.82,-.48,.58),(.88,-.22,.57),
+         (.88,.22,.57),(.82,.48,.58),(.54,.70,.61)]
+    vertices=lip+[(x,y,z+.070) for x,y,z in lip]
     geometry.add(vertices,[tuple(reversed(range(6))),tuple(range(6,12))],'armor')
     geometry.add(vertices,[(j,(j+1)%6,(j+1)%6+6,j+6) for j in range(6)],'metal')
+    # Small temple fasteners reinforce the helmet outline without covering
+    # cheeks, eyes or chin. They share the rim batch rather than adding draws.
+    for sign in [-1,1]:
+        geometry.box((.14,sign*1.065,.40),(.22,.065,.12),'metal',.10)
+    return geometry
+
+
+def army_webbing_geometry():
+    """One economical infantry kit: exposed shirt between straps and pouches."""
+    geometry=Geometry()
+    for sign in [-1,1]:
+        geometry.box((.76,sign*.49,.12),(.19,.18,1.42),'metal',.08)
+        geometry.box((-.74,sign*.49,.12),(.19,.18,1.42),'metal',.08)
+        geometry.box((0,sign*.49,.80),(1.43,.18,.16),'metal',.08)
+    geometry.loft([(-.73,.90,.91),(-.57,.90,.91)],'metal','Z',12,False)
+    for lateral in [-.49,0,.49]:
+        geometry.box((.91,lateral,-.30),(.30,.34,.55),'armor',.13)
+        geometry.box((1.065,lateral,-.13),(.035,.36,.13),'metal',.10)
+    geometry.box((.94,0,-.65),(.12,.25,.19),'armor',.10)
+    return geometry
+
+
+def army_platecarrier_geometry():
+    """One heavy kit with chamfered plates, broad straps and magazine pouches."""
+    geometry=Geometry().loft([(-.80,.72,.76),(-.59,.91,.94),(.42,.96,.98),(.83,.65,.72)],
+                             'armor','Z',8,False)
+    geometry.box((.94,0,.24),(.23,1.20,.68),'armor',.13)
+    geometry.box((-.92,0,.15),(.23,1.31,1.03),'armor',.13)
+    for sign in [-1,1]:
+        geometry.box((0,sign*.53,.79),(1.36,.24,.19),'metal',.09)
+        geometry.box((.77,sign*.53,.54),(.18,.24,.55),'metal',.09)
+    geometry.loft([(-.77,.91,.93),(-.60,.91,.93)],'metal','Z',12,False)
+    for lateral in [-.48,0,.48]:
+        geometry.box((1.01,lateral,-.32),(.31,.36,.52),'armor',.13)
+        geometry.box((1.17,lateral,-.15),(.035,.38,.13),'metal',.10)
     return geometry
 
 
@@ -261,6 +314,8 @@ def make_library(collection):
     geometries['hood']=hood
     geometries['cowboy_hat']=Geometry().loft([(-.05,1.62,1.75),(.035,1.67,1.78),(.12,1.26,1.30)],'hat','Z',24).loft([(.10,.86,.96),(.86,.79,.82),(.98,.58,.73)],'hat','Z',16).loft([(.17,.88,.98),(.30,.87,.96)],'wood','Z',16)
     geometries['vest']=Geometry().loft([(-.80,.71,.77),(-.55,.91,.88),(.65,1.03,.94),(.85,.73,.63)],'armor','Z',16)
+    geometries['army_webbing']=army_webbing_geometry()
+    geometries['army_platecarrier']=army_platecarrier_geometry()
     geometries['coat']=Geometry().loft([(-1.55,.89,1.0),(-.5,.78,.83),(.65,1,.89),(1,.60,.51)],'white','Z',16)
     g=Geometry().box((0,0,0),(.55,1,.80),'metal')
     for side in [-1,1]:
@@ -396,6 +451,8 @@ def assemble(body_collection,equipment_collection):
         source_part(f'boot.{side}','foot',(.075,sign*.12,.07),(.32,.34,.30),bone=f'foot.{side}',collection=body_collection)
     for name,semantic,center,scale,bone in [
         ('Armor vest','vest',(0,0,1.20),(.20,.27,.30),'chest'),
+        ('NM0 infantry webbing','army_webbing',(0,0,1.20),(.20,.27,.30),'chest'),
+        ('NM0 armored plate carrier','army_platecarrier',(0,0,1.20),(.20,.27,.30),'chest'),
         ('Chemist coat','coat',(0,0,1.20),(.205,.28,.30),'chest'),
         ('Ninja hood','hood',(.015,0,1.66),(.15,.15,.15),'head'),
         ('Cowboy hat','cowboy_hat',(.015,0,1.78),(.145,.14,.15),'head'),
@@ -403,6 +460,13 @@ def assemble(body_collection,equipment_collection):
         ('Armor visor','visor',(.015,0,1.66),(.15,.15,.15),'head'),
         ('Jetpack','jetpack',(-.24,0,1.22),(.25,.30,.32),'chest')]:
         source_part(name,semantic,center,scale,bone=bone,visible=False,collection=equipment_collection)
+    for side in ['L','R']:
+        definition=next(b for b in bone_defs if b[0]==f'upper_arm.{side}')
+        a,elbow=Vector(definition[1]),Vector(definition[2]);b=a+(elbow-a)*.38
+        cap=source_part(f'NM0 armored shoulder.{side}','upper_arm',(a+b)*.5,
+                        ((b-a).length,.23*1.16,.23*1.08),b-a,f'upper_arm.{side}',
+                        'nm0_plate',False,equipment_collection)
+        cap['soldierKit']='army_platecarrier'
     for i,name in enumerate(['pistol','revolver','smg','rifle','shotgun','coach_gun','rocket','bow','taser','particle_beam','sword','pickaxe','shovel','cannon','grenade','flask']):
         # Park optional equipment in an organized hidden collection; all are
         # editable and exportable without cluttering the default silhouette.
@@ -489,7 +553,12 @@ def validate(data):
     helmet=data['meshes']['helmet'];hood=data['meshes']['hood']
     assert min(helmet['positions'][2::3])>-.20,'Helmet must leave the lower head and neck exposed'
     assert min(helmet['positions'][2::3])-min(hood['positions'][2::3])>.60,'Helmet must have a shallower opening than the cloth hood'
-    assert max(helmet['positions'][0::3])>1.25,'Rigid helmet brow peak is missing'
+    assert .84<max(helmet['positions'][0::3])<.91,'Army brow must remain behind the face surface even from overhead'
+    assert max(helmet['positions'][2::3])<1.18,'Army crown must remain compact rather than egg-shaped'
+    assert len(helmet['indices'])//3<=700,'Army helmet must stay cheaper than the previous shell'
+    for name in ['army_webbing','army_platecarrier']:
+        assert name in data['meshes'] and len(data['meshes'][name]['materialGroups'])<=2,(name,'kit batch budget')
+        assert len(data['meshes'][name]['indices'])//3<=500,(name,'kit triangle budget')
     print('PLAYER_MESH_VALID',len(data['meshes']),'semantic meshes,',triangles,'base triangles')
 
 
@@ -647,9 +716,50 @@ def export_helmet_variant(rig):
         helmet.hide_render,helmet.hide_viewport,hide_set=hidden;helmet.hide_set(hide_set)
 
 
+def export_soldier_variants(rig,render=False):
+    """The same bone-attached kit pieces are portable worn Blender variants."""
+    scene=bpy.context.scene
+    visibility={obj.name:(obj.hide_render,obj.hide_viewport,obj.hide_get()) for obj in SOURCE}
+    materials=[(slot,slot.material) for obj in SOURCE for slot in obj.material_slots]
+    render_path=scene.render.filepath
+    camera=scene.camera
+    camera_matrix=camera.matrix_world.copy() if camera else None
+    try:
+        for kit,weapon,filename in [('army_webbing','rifle','nm0-grey-soldier'),
+                                    ('army_platecarrier','pistol','nm0-armored-soldier')]:
+            heavy=kit=='army_platecarrier'
+            for obj in SOURCE:
+                semantic=obj['semantic']
+                visible=bool(obj.get('variantVisible')) or semantic in [kit,'helmet',weapon] or obj.get('soldierKit')==kit
+                obj.hide_render=not visible;obj.hide_viewport=not visible;obj.hide_set(not visible)
+                for slot in obj.material_slots:
+                    original=next(material for saved,material in materials if saved==slot)
+                    name=original.name
+                    replacement=('nm0_heavy_cloth' if heavy else 'nm0_cloth') if name=='shirt' else ('nm0_heavy_trousers' if heavy else 'nm0_trousers') if name=='pants' else None
+                    if name=='boots':replacement='nm0_heavy_boots' if heavy else 'nm0_boots'
+                    if semantic in ['army_webbing','army_platecarrier']:
+                        replacement=('nm0_plate' if heavy else 'nm0_webbing') if name=='armor' else ('nm0_plate_trim' if heavy else 'nm0_trim') if name=='metal' else replacement
+                    if semantic=='helmet':
+                        replacement=('nm0_heavy_helmet' if heavy else 'nm0_helmet') if name=='armor' else ('nm0_heavy_helmet_trim' if heavy else 'nm0_helmet_trim') if name=='metal' else replacement
+                    slot.material=MATERIALS[replacement] if replacement else original
+            export_glb(rig,filename+'.glb')
+            if render and camera:
+                camera.location=(4,-6,3.4)
+                camera.rotation_euler=(Vector((0,0,.92))-camera.location).to_track_quat('-Z','Y').to_euler()
+                scene.render.filepath=str(OUT/(filename+'.png'));bpy.ops.render.render(write_still=True)
+    finally:
+        for slot,material in materials:slot.material=material
+        for obj in SOURCE:
+            obj.hide_render,obj.hide_viewport,hidden=visibility[obj.name];obj.hide_set(hidden)
+        if camera and camera_matrix is not None:camera.matrix_world=camera_matrix
+        scene.render.filepath=render_path
+
+
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--skip-renders',action='store_true');parser.add_argument('--validate-only',action='store_true');parser.add_argument('--export-existing',action='store_true')
+    parser=argparse.ArgumentParser();parser.add_argument('--skip-renders',action='store_true');parser.add_argument('--validate-only',action='store_true');parser.add_argument('--export-existing',action='store_true');parser.add_argument('--soldier-variants-only',action='store_true')
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+    if args.soldier_variants_only and not args.export_existing:
+        parser.error('--soldier-variants-only requires --export-existing and the editable player.blend')
     if args.validate_only:
         validate(json.loads((OUT/'player-mesh.json').read_text()));return
     load_native_weapons()
@@ -657,7 +767,7 @@ def main():
     bpy.context.preferences.filepaths.save_version=0
     if args.export_existing:
         for name in PALETTE:
-            material=bpy.data.materials.get(name);MATERIALS[name]=material
+            material=bpy.data.materials.get(name) or toon_material(name,PALETTE[name]);MATERIALS[name]=material
             if material and material.use_nodes:
                 ramp=next((node for node in material.node_tree.nodes if node.bl_idname=='ShaderNodeValToRGB'),None)
                 if ramp:PALETTE[name]=list(ramp.color_ramp.elements[-1].color[:3])
@@ -667,7 +777,10 @@ def main():
         SOURCE.extend(obj for obj in bpy.data.objects if obj.type=='MESH' and 'semantic' in obj)
         rig=bpy.data.objects.get('PlayerRig')
         if not rig:raise RuntimeError('PlayerRig is missing from the editable source')
-        sync_source_edits();validate_scene(rig);export_compact();export_glb(rig);export_helmet_variant(rig)
+        if args.soldier_variants_only:
+            validate_scene(rig);export_soldier_variants(rig,not args.skip_renders)
+            print('SOLDIER_VARIANTS_READY',str(OUT));return
+        sync_source_edits();validate_scene(rig);export_compact();export_glb(rig);export_helmet_variant(rig);export_soldier_variants(rig,not args.skip_renders)
         if not args.skip_renders:
             scene=bpy.context.scene;scene.render.filepath=str(OUT/'player-three-quarter.png');bpy.ops.render.render(write_still=True)
             render_headwear_previews()
@@ -679,7 +792,7 @@ def main():
     body=bpy.data.collections.new('Rigged player');bpy.context.scene.collection.children.link(body)
     equipment=bpy.data.collections.new('Equipment variants');bpy.context.scene.collection.children.link(equipment)
     make_library(library);rig=assemble(body,equipment);validate_scene(rig);data=export_compact()
-    export_glb(rig);export_helmet_variant(rig);stage_and_render(args.skip_renders)
+    export_glb(rig);export_helmet_variant(rig);stage_and_render(args.skip_renders);export_soldier_variants(rig,not args.skip_renders)
     bpy.ops.object.select_all(action='DESELECT');rig.hide_set(False);rig.select_set(True);bpy.context.view_layer.objects.active=rig
     bpy.context.scene['PlayerAssetSchema']=1
     bpy.context.scene['Regenerate']='blender --background --factory-startup --python tools/blender-player.py'
@@ -688,6 +801,8 @@ def main():
               'previews':['player-'+v+'.png' for v in ['three-quarter','front','back','overhead']],
               'helmetVariant':'player-helmet.glb','helmetPreview':'player-helmet.png',
               'headwearComparison':'player-headwear-comparison.png',
+              'soldierVariants':[{'kit':'army_webbing','object':'NM0 infantry webbing','portable':'nm0-grey-soldier.glb','preview':'nm0-grey-soldier.png'},
+                                 {'kit':'army_platecarrier','object':'NM0 armored plate carrier','portable':'nm0-armored-soldier.glb','preview':'nm0-armored-soldier.png'}],
               'meshCount':len(data['meshes']),'boneCount':len(rig.data.bones),
               'runtimeMaterial':'Three-band world-lit shader; glTF retains palette and toon metadata, not Blender node execution.'}
     (OUT/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')

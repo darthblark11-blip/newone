@@ -12,7 +12,21 @@
   "helmetVariant": "player-helmet.glb",
   "helmetPreview": "player-helmet.png",
   "headwearComparison": "player-headwear-comparison.png",
-  "meshCount": 35,
+  "soldierVariants": [
+    {
+      "kit": "army_webbing",
+      "object": "NM0 infantry webbing",
+      "portable": "nm0-grey-soldier.glb",
+      "preview": "nm0-grey-soldier.png"
+    },
+    {
+      "kit": "army_platecarrier",
+      "object": "NM0 armored plate carrier",
+      "portable": "nm0-armored-soldier.glb",
+      "preview": "nm0-armored-soldier.png"
+    }
+  ],
+  "meshCount": 37,
   "boneCount": 18,
   "runtimeMaterial": "Three-band world-lit shader; glTF retains palette and toon metadata, not Blender node execution."
 }

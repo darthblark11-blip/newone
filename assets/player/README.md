@@ -16,13 +16,26 @@ putting every hidden variant in a standard GLB would make them all appear at onc
 GLB materials retain the palette and toon metadata. The browser implements the
 actual three-band material; Blender's Shader-to-RGB nodes are not a glTF feature.
 
-The helmet is a rigid, open-bottom shell with a separate rolled rim, projecting
-brow peak and relieved rear edge. It leaves the lower head exposed; the cloth
-hood keeps its deeper wrap. Both use the head-centered origin with +X forward.
-The helmet's local bounds are X [-1.20995, 1.37], Y [-1.1394, 1.1394],
-Z [-0.132964, 1.20]. `player-helmet.glb` contains the rigged helmet variant.
+The army helmet has a compact crown, dark rolled rim, raised temples and a
+short brow cut behind the forward face surface. It leaves a skin crescent
+visible from the actual overhead game camera as well as an open face from
+the front. The cloth hood keeps its deeper wrap. Both use the head-centered
+origin with +X forward. The helmet's local bounds are X [-1.177475, 0.88],
+Y [-1.123375, 1.123375], Z [-0.08, 1.12]. It uses 636 triangles, down from 788.
+`player-helmet.glb` contains the rigged helmet variant.
 `player-helmet.png` shows it worn, and `player-headwear-comparison.png` compares
 the helmet on the left with the unchanged hood on the right.
+
+`nm0-grey-soldier.glb` and `nm0-armored-soldier.glb` contain the NM0 infantry
+and armored pistol roles, with matching worn-kit previews. Their uniforms,
+helmet/rim colors, boots and equipment match the runtime roles. The editable
+`.blend` retains the bone-weighted outfit variants: grey infantry webbing,
+belts and magazine pouches; the armored role's plate carrier and shoulder caps.
+The base red-shirt player remains the default visible character.
+
+The shared `army_webbing` and `army_platecarrier` meshes join straps, pouches
+and plates into one draw part each, with two material groups. They use 408
+and 440 triangles respectively. The armored shoulder caps reuse `upper_arm`.
 
 ## Regenerate
 
