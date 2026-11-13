@@ -1,5 +1,10 @@
 # Blender roof lighting geometry
 
+Level 1's visible city roof assemblies have a separate editable
+[`city-buildings.blend`](city-buildings.blend) source and
+[export workflow](city-buildings.md). Their embedded artwork and lighting share
+the same camera projection; see the [city upgrade](../../docs/city-blender-overhaul.md).
+
 `roof-lighting.blend` contains the 96 actual authored frontier roof assemblies,
 positioned at their native map coordinates. Its 3,180 polygons retain the exact
 order and winding supplied by `frontierRoofMesh()`, including chimneys, towers,
