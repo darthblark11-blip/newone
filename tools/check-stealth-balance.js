@@ -285,9 +285,13 @@ ok("_redMesaNoise.events.length===0&&qaState.phase==='PATROL'", 'A silent bow do
 scene();P("stealthEmitNoise(0,600,280,'RUN');");tick();
 ok("qaState.phase==='PATROL'&&qaState.goalX===0&&qaState.goalY===0", 'Inaudible running does not redirect a guard');
 scene();wall('HIGH', 150);P("stealthEmitNoise(300,0,600,'SHOT');");tick();
-ok("qaState.phase==='PATROL'", 'A high wall still attenuates out-of-reach sound');
+ok("qaState.suspicion>0&&qaState.suspicion<STEALTH_PERCEPTION.noiseShotGain*.5&&qaState.goalX===300&&qaState.goalY===0&&!qaState.visible&&qaState.phase!=='ALERT'",
+  'A distant shot behind a wall supplies a weak historical clue without instant combat');
+const distantBlockedSuspicion=P('qaState.suspicion');
 scene();wall('HIGH', 100);P("stealthEmitNoise(200,0,600,'SHOT');");tick();
 ok("qaState.phase==='CURIOUS'&&qaState.goalX===200&&qaState.goalY===0", 'An audible wall-attenuated shot still turns the listener');
+ok(`qaState.suspicion>${distantBlockedSuspicion}&&qaState.suspicion<STEALTH_PERCEPTION.noiseShotGain`,
+  'A nearer blocked shot produces more suspicion than the distant blocked clue');
 near('qaGuard.aimAngle', 0, 1e-10, 'Wall attenuation preserves the exact accepted source bearing');
 
 // Stronger response speeds must flow through native movement/collision and

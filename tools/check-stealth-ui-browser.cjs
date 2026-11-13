@@ -2,7 +2,8 @@
 // STEALTH_P5=/path/to/p5-1.9.0.min.js node tools/check-stealth-ui-browser.cjs
 const fs=require('fs'),path=require('path'),crypto=require('crypto'),assert=require('assert/strict');
 const {chromium}=require('playwright-core');
-const repo=path.resolve(__dirname,'..'),source=fs.readFileSync(path.join(repo,'game.js'),'utf8');
+const repo=path.resolve(__dirname,'..'),sourcePath=process.env.GAME_JS||path.join(repo,'game.js');
+const source=fs.readFileSync(sourcePath,'utf8');
 const p5=fs.readFileSync(process.env.STEALTH_P5||'/workspace/newone-dev/vendor/p5-1.9.0.min.js','utf8');
 const out=process.env.STEALTH_QA_OUT||'/tmp/stealth-ui-qa';
 const hash=s=>crypto.createHash('sha256').update(s).digest('hex');
@@ -133,6 +134,23 @@ async function checkBehavior(page){
   stealthEmitNoise(5550,-3520,280);const source={..._redMesaNoise.events.at(-1)},heard=tick(guard,1000/60);
   results.historicalHearing={source,player:{x:player.x,y:player.y},angle:guard.aimAngle,
    phase:heard.phase,visible:heard.visible,goalX:heard.goalX,goalY:heard.goalY,sharedAngle:guard._entityFacing.angle};
+  // Real player shots are historical by the time the guard senses them. Two
+  // nearby loud reports accumulate; neither grants sight of the moved player.
+  if(typeof stealthPerceivedNoise==='function'){
+   guard=prepare(1,2000);guard.aimAngle=Math.PI;bullets=[];
+   const samples=[];
+   for(let i=0;i<2;i++){
+    player.x=5410+i*2;player.y=-3595;player.currentWeapon=WEAPONS.PISTOL;
+    player.ammo=17;player.reloadTimer=player.fireTimer=0;player.aimAngle=0;player.fire(0);
+    const event={..._redMesaNoise.events.at(-1)};
+    player.x=7400;player.y=-3200;guard.aimAngle=Math.PI;guard.fireTimer=0;
+    const s=tick(guard,1000/60);
+    samples.push({phase:s.phase,suspicion:s.suspicion,visible:s.visible,event,
+     perceived:stealthPerceivedNoise(guard,event),goal:{x:s.goalX,y:s.goalY}});
+   }
+   results.cumulativeHearing={samples,hiddenPlayer:{x:player.x,y:player.y},
+    guardShots:bullets.filter(b=>b.shooter===guard).length};
+  }
   results.fastMovement=[];
   for(const phase of ['INVESTIGATE','SEARCH']){
    guard=prepare(1,2000);guard.aimAngle=Math.PI;stealthEnterPhase(guard,phase);
@@ -183,6 +201,26 @@ async function checkBehavior(page){
    for(let i=0;i<30&&!reacquired;i++)reacquired=tick(guard,1000/60).visible;
    results.coverFight.at(-1).reacquired=reacquired;
   }
+  if(typeof stealthProbeLastCover==='function'){
+   guard=prepare(1,200);guard.aiOffset=0;tick(guard,100);
+   const state=stealthPerceptionState(guard),observed={x:state.goalX,y:state.goalY};
+   const wall={x:5500,y:-3600,w:40,h:120,isWall:true,coverType:'HIGH',hp:Infinity,maxHp:Infinity};
+   activeBuildings=buildings=[wall];invalidateColIndex();state.sampleMs=0;
+   player.x=7400;player.y=-1600;player.isMoving=false;player.gait=0;leftStick.dx=leftStick.dy=0;
+   const start={x:guard.x,y:guard.y};bullets=[];
+   const samples=[];let hidden=true,retained=true,insideSolid=false;
+   for(let i=0;i<120;i++){
+    guard.fireTimer=0;const s=tick(guard,1000/60),p=s.coverProbe;
+    hidden&&=!s.visible;retained&&=s.phase==='ALERT'&&guard.state==='CHASE';
+    insideSolid||=Math.abs(guard.x-wall.x)<wall.w*.5&&Math.abs(guard.y-wall.y)<wall.h*.5;
+    if(i%6===0||i===119)samples.push({x:guard.x,y:guard.y,goal:{x:s.goalX,y:s.goalY},probe:p?{
+     x:p.x,y:p.y,goal:p.goal?{...p.goal}:null,visited:p.visited.map(q=>({...q})),done:p.done,attempts:p.attempts}:null});
+   }
+   results.lastKnownFlank={observed,hiddenPlayer:{x:player.x,y:player.y},start,
+    distance:Math.hypot(guard.x-start.x,guard.y-start.y),hidden,retained,insideSolid,
+    probeRadius:STEALTH_PERCEPTION.coverProbeRadius,probeClearance:STEALTH_PERCEPTION.coverProbeClearance,
+    samples,guardShots:bullets.filter(b=>b.shooter===guard).length};
+  }
   guard=prepare(1,220);tick(guard,100);player.currentWeapon=WEAPONS.PISTOL;player.ammo=17;player.reloadTimer=0;player.aimAngle=0;
   activeBuildings=buildings=[{x:5510,y:-3600,w:38,h:6000,coverType:'HIGH',hp:Infinity,maxHp:Infinity}];invalidateColIndex();
   guard.fireTimer=0;bullets=[];let lastShot=null,gunfightRetained=true,gunfightHidden=true;const acousticSamples=[];
@@ -191,8 +229,10 @@ async function checkBehavior(page){
     // Stay within the real wall-attenuated hearing radius as the guard moves
     // along cover; a legitimately inaudible shot must not sustain contact.
     player.x=5620+i/40*15;player.y=guard.y+20;player.fire(0);lastShot={..._redMesaNoise.events.at(-1)};
-    acousticSamples.push({source:lastShot,guard:{x:guard.x,y:guard.y},distance:Math.hypot(player.x-guard.x,player.y-guard.y),
-     reach:lastShot.radius*(hasLOS(guard.x,guard.y,player.x,player.y)?1:.42)});
+    const distance=Math.hypot(player.x-guard.x,player.y-guard.y),reach=lastShot.radius*(hasLOS(guard.x,guard.y,player.x,player.y)?1:.42);
+    const perceived=typeof stealthPerceivedNoise==='function'?stealthPerceivedNoise(guard,lastShot):null;
+    acousticSamples.push({source:lastShot,guard:{x:guard.x,y:guard.y},distance,reach,perceived,
+     audible:perceived===null?distance<=reach:perceived>=STEALTH_PERCEPTION.noiseMinAudible});
    }
    player.y+=.1;
    const s=tick(guard,100);gunfightRetained&&=s.phase==='ALERT'&&guard.state==='CHASE';gunfightHidden&&=!s.visible;
@@ -274,6 +314,16 @@ async function checkBehavior(page){
  assert.ok(historical.phase==='CURIOUS'&&!historical.visible,'A historical sound alone cannot reveal a distant hidden player');
  assert.deepEqual({x:historical.goalX,y:historical.goalY},{x:historical.source.x,y:historical.source.y},'Hearing uses the recorded sound position');
  assert.ok(Math.abs(historical.angle-expectedAngle)<1e-8&&historical.angle===historical.sharedAngle,'Immediate historical sound orientation survives the native finally filter');
+ if(result.cumulativeHearing){
+  const hearing=result.cumulativeHearing;
+  assert.notEqual(hearing.samples[0].phase,'ALERT','One near shot is suspicion, not instant omniscience');
+  assert.equal(hearing.samples[1].phase,'ALERT','Two nearby loud historical shots cumulatively confirm danger');
+  assert.ok(hearing.samples[1].suspicion>hearing.samples[0].suspicion&&hearing.samples.every(s=>!s.visible),
+   'Historical acoustic evidence accumulates while the player remains unseen');
+  const last=hearing.samples.at(-1);assert.deepEqual(last.goal,{x:last.event.x,y:last.event.y},'Acoustic alert retains the last recorded sound origin');
+  assert.notDeepEqual(last.goal,hearing.hiddenPlayer,'Acoustic alert cannot track the moved hidden player');
+  assert.equal(hearing.guardShots,0,'Acoustic alert never permits firing at an unseen player');
+ }
  for(const row of result.fastMovement){
   assert.ok(row.distance>(row.phase==='INVESTIGATE'?210:185),`${row.phase} runs urgently over one native second`);
   assert.ok(row.firstTurn>0&&row.firstTurn<18/60&&row.maxTurn>9/60&&row.maxTurn<=18/60+1e-8,'Urgent turns connect through intermediate frames with the faster 18 rad/s limit');
@@ -291,9 +341,25 @@ async function checkBehavior(page){
   assert.deepEqual(row.memory,row.observed,'Brief cover keeps the last observed location rather than live hidden tracking');
   assert.ok(row.reacquired,'Leaving brief cover restores combat visibility without a new suspicion buildup');
  }
+ if(result.lastKnownFlank){
+  const flank=result.lastKnownFlank;
+  assert.ok(flank.hidden&&flank.retained,'Last-known cover movement preserves alert without acquiring the silent relocated player');
+  assert.ok(flank.distance>60&&!flank.insideSolid,'The native guard moves around finite cover without entering its solid footprint');
+  assert.ok(flank.samples.some(s=>s.probe&&(s.probe.goal||s.probe.visited.length)),'Blocked pursuit uses the cover-probe route');
+  for(const sample of flank.samples){
+   assert.deepEqual(sample.goal,flank.observed,'Cover flanking follows the recorded sighting instead of hidden coordinates');
+   if(sample.probe){
+    assert.deepEqual({x:sample.probe.x,y:sample.probe.y},flank.observed,'Probe anchor remains the historical contact');
+    const nodes=sample.probe.visited.concat(sample.probe.goal?[sample.probe.goal]:[]);
+    assert.ok(nodes.every(q=>Math.hypot(q.x-flank.observed.x,q.y-flank.observed.y)<=flank.probeRadius+flank.probeClearance+.001),
+     'Cover probe stays inside its bounded last-known neighborhood');
+   }
+  }
+  assert.equal(flank.guardShots,0,'Cover-probe movement does not allow firing at hidden contact');
+ }
  const fight=result.audibleCoveredFight;
  assert.equal(fight.playerShots,5,'The covered firefight emits five real native player shots');
- assert.ok(fight.acousticSamples.every(row=>row.distance<=row.reach),'Covered gunfire fixtures stay inside the actual attenuated hearing radius');
+ assert.ok(fight.acousticSamples.every(row=>row.audible),'Covered gunfire fixtures remain audible under the production attenuation model');
  assert.ok(fight.retained&&fight.hidden&&fight.blockedBullets===0,'Audible covered gunfire sustains an eighteen-second fight without granting shooting visibility');
  assert.deepEqual(fight.memory,{x:fight.source.x,y:fight.source.y},'Covered gunfire updates the historical contact position once');
  assert.notDeepEqual(fight.memory,fight.player,'Quiet movement after the shot cannot become live hidden tracking');
