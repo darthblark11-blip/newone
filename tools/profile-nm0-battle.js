@@ -1,5 +1,5 @@
 // Level 2 liberation stress replay: eighty surviving recruits fight the native
-// 100-unit NM-0 ambush. Real p5, Chromium, AI, projectiles,
+// configured NM-0 opening. Real p5, Chromium, AI, projectiles,
 // particles, terrain, shadows, lighting and HUD. The crowd stays alive, unlike
 // check-frame.js, which deliberately drains its actors to exercise death paths.
 //
@@ -15,7 +15,7 @@
 // Default wildlife=quiet encounter timer isolates the equivalent AI/art work;
 // BATTLE_WILDLIFE=native includes the separately authorized spawn suppression.
 // Actor HP is raised to sustain the crowd. Since native reserves are spawned
-// after kills, this scenario retains 200 reserves without exercising them.
+// after kills, this scenario retains the unspawned reserve without exercising it.
 //
 // CPU draw time and start-to-start painted frame intervals are both reported.
 // Headless Chromium uses software WebGL; these figures describe this host,
@@ -119,7 +119,8 @@ window.__battleInit=function(count,mode){
   inTownCutscene=true;townPhase=7;deltaTime=1000/60;redraw();
   if(!nm0AmbushActive)throw Error('Native Level 2 tower ambush did not start');
   const ambushers=enemiesList.filter(e=>!e.isFriendly&&e.isAmbush);
-  if(ambushers.length!==100)throw Error('Expected 100 initial NM-0 ambushers, got '+ambushers.length);
+  const expectedOpening=typeof NM0_TOWER_INITIAL==='number'?NM0_TOWER_INITIAL:100;
+  if(ambushers.length!==expectedOpening)throw Error('Expected '+expectedOpening+' initial NM-0 ambushers, got '+ambushers.length);
   for(const e of ambushers){e.hp=e.maxHp=1e8;e.fireTimer=e.aiOffset*3;}
   window.__initial={allies:recruits.length,ambushers:ambushers.length,reserves:window.ambushSpawnsRemaining};
   zoom=.65;camX=px-width/2/zoom;camY=py-height/2/zoom;

@@ -41,6 +41,13 @@ surface facial marks, uses uniform XYZ scale in living and corpse poses, and is
 calibrated to the standard pistol player's original 11-unit projected diameter.
 Head centers and the native gameplay hit geometry remain unchanged.
 
+Military and armor helmets use an open hard shell with a separate rim and front
+lip, centered on the head at its uniform radius. The lower face and neck remain
+exposed; the armor visor is a narrow brow window. Hood geometry remains separate.
+See the [helmet comparison](previews/player3d-helmets.png) and the source
+`assets/player/player-headwear-comparison.png`. `player-helmet.glb` exports the
+rigged helmet variant for Blender-compatible editors.
+
 Standing, crouched, and prone mesh landmarks and projected proportions follow
 the original painter. Chest and pelvis retain independent native headings;
 authored elbows are preserved. Prone legs come from the stance joints, and
@@ -129,6 +136,8 @@ node tools/check-player3d-dispatch.js
 node tools/check-player3d-corpses.js
 node tools/check-player3d-head.js
 node tools/check-player3d-head-corpses.js
+node tools/check-player3d-helmets.js
+node tools/check-player3d-helmets-browser.cjs
 node tools/check-player3d-lighting.cjs
 node tools/check-player3d-fidelity.js
 node tools/check-player3d-support-hand.js

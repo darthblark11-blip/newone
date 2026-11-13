@@ -8,6 +8,7 @@ const {execFileSync}=require('node:child_process');
 const {createHash}=require('node:crypto');
 const {ctx,probe}=require('./harness');
 const relayChanges=require('./fixtures/level1-relay-mechanics.json').functions;
+const groupChanges=require('./fixtures/nm0-groups20-mechanics.json').functions;
 const baseline=execFileSync('git',['show','37dfd722d2524a1810851ffc62905b3aa1d655a4:game.js'],
   {cwd:__dirname+'/..',maxBuffer:8e6}).toString();
 const candidate=fs.readFileSync(process.env.GAME_JS||__dirname+'/../game.js','utf8');
@@ -65,8 +66,17 @@ function sameFunction(name){
 }
 function sameSource(name,actual,expected){
   const reviewed=relayChanges[name];
-  if(!reviewed){assert.equal(actual,expected,name+' must remain exactly the directional-falls branch implementation');return;}
   const hash=source=>createHash('sha256').update(source).digest('hex');
+  const group=groupChanges[name];
+  if(group){
+    if(reviewed){
+      assert.equal(hash(expected),reviewed.previous,name+' reviewed pre-feature source');
+      assert.equal(group.previous,reviewed.current,name+' deployment edit starts at the reviewed relay implementation');
+    }else assert.equal(hash(expected),group.previous,name+' reviewed pre-deployment source');
+    assert.equal(hash(actual),group.current,name+' reviewed twenty-body deployment source: '+group.reason);
+    return;
+  }
+  if(!reviewed){assert.equal(actual,expected,name+' must remain exactly the directional-falls branch implementation');return;}
   assert.equal(hash(expected),reviewed.previous,name+' reviewed pre-feature source');
   assert.equal(hash(actual),reviewed.current,name+' reviewed relay source: '+reviewed.reason);
 }
@@ -74,6 +84,26 @@ function namesBetween(start,end){
   const a=baseline.indexOf(start),b=baseline.indexOf(end,a+start.length);
   assert.ok(a>=0&&b>a,'baseline mechanics region exists');
   return [...baseline.slice(a,b).matchAll(/^function (\w+)\(/gm)].map(m=>m[1]);
+}
+function checkDeployments(){
+  for(const name of ['triggerGateAmbush','spawnAmbushReinforcement','triggerOutpostAmbush'])sameFunction(name);
+  // These two deployment helpers were not in the original source-lock roster.
+  // Pin their complete source, including reserve and placement branches.
+  for(const name of ['spawnFortWave','spawnNm0OpeningFlank']){
+    assert.equal(createHash('sha256').update(probe(`${name}.toString()`)).digest('hex'),
+      groupChanges[name].current,name+' reviewed deployment helper source');functions++;
+  }
+  for(const [name,value]of Object.entries({NM0_ACTIVE_GROUP:20,NM0_TOWER_INITIAL:20,
+    NM0_GATE_COUNTED_INITIAL:20,NM0_GREY_INITIAL:20,FORT_MUSTER_SPAWN:20,
+    FORT_MUSTER_TOTAL:150,FORT_MUSTER_WAVES:130,FORT_WAVE_FLOOR:6,FORT_MUSTER_TICK:24,
+    NM0_REINFORCEMENT_AERIAL_CHANCE:.05,NM0_RESTORE_AERIAL_SHARE:.04})){
+    assert.equal(probe(name),value,name+' reviewed deployment setting');constants++;
+  }
+}
+if(process.argv.includes('--deployments-only')){
+  checkDeployments();
+  console.log(`PASS NM0 deployment source lock: ${functions} reviewed functions and ${constants} exact settings; prior relay source chains intact. Full mechanics parity is a separate check.`);
+  process.exit(0);
 }
 const guarded=new Set([
   ...namesBetween('function actorCanUseStances(','const SPATIAL_CELL_SIZE'),
@@ -104,7 +134,8 @@ const guarded=new Set([
   'wildlifeHumanContact','wildlifeHumanBlocks','wildlifeCanStand','wildlifeBrain',
   'wildlifeSenseHumans','wildlifeRebuildGrid','notifyForestWildlifeThreat'
 ]);
-for(const name of guarded)if(!name.startsWith('draw'))sameFunction(name);
+for(const name of guarded)if(!name.startsWith('draw')&&!groupChanges[name])sameFunction(name);
+checkDeployments();
 
 // Lock all non-render methods, including accessors and uncommon weapon paths.
 // Constructor bodies are checked separately because a class constructor's
@@ -150,4 +181,4 @@ for(const name of ['ENEMY_COVER_WEAPONS','SHOVEL_AIRBORNE_TYPES']){
   assert.equal(probe(expression),before(expression),name+' eligibility set');constants++;
 }
 assert.ok(!candidate.includes('const STANCE_EXCLUDED_TYPES'),'the previous stance shortcut is removed');
-console.log(`PASS mechanics source lock: ${functions} functions, ${methods} methods/accessors, ${constructors} constructors and ${constants} tuning tables/constants match 37dfd72 with authorized frontline gates, ambush sizing and ${Object.keys(relayChanges).length} reviewed territory/relay/gate-isolation source changes.`);
+console.log(`PASS mechanics source lock: ${functions} functions, ${methods} methods/accessors, ${constructors} constructors and ${constants} tuning tables/constants match 37dfd72 with authorized frontline gates, ambush sizing, ${Object.keys(relayChanges).length} reviewed territory/relay/gate-isolation changes and ${Object.keys(groupChanges).length} reviewed twenty-body deployment changes.`);

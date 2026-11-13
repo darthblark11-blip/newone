@@ -29,16 +29,20 @@ for(const level of [1,2,3,4,5,6,7]){
     globalPolicyAlly.isFriendly=true;`);
   clearFight();
   probe('inTownCutscene=true;townPhase=7;draw();');
-  check('enemiesList.filter(e=>e.isAmbush).length===60&&nm0AmbushKills===300&&window.ambushSpawnsRemaining===240',
+  check('enemiesList.filter(e=>e.isAmbush).length===20&&nm0AmbushKills===300&&window.ambushSpawnsRemaining===280',
     'Level '+level+' shared tower beat uses the reduced opening and full reserve');
   check('!globalPolicyAlly.isAmbush','Level '+level+' tower beat leaves allies uncounted');
+  check('enemiesList.filter(e=>e.isAmbush&&(e.eType==="AERIAL"||e.eType==="AERIAL_PISTOL")).length===2',
+    'Level '+level+' tower opening halves four combined air slots to two');
 
   for(const north of [false,true]){
     clearFight();
     probe(`triggerGateAmbush(${north?-4400:level===1?5400:3000},${north});`);
-    check('enemiesList.length===46&&enemiesList.filter(e=>e.isAmbush).length===45&&nm0AmbushKills===150&&window.ambushSpawnsRemaining===105',
+    check('enemiesList.length===21&&enemiesList.filter(e=>e.isAmbush).length===20&&nm0AmbushKills===150&&window.ambushSpawnsRemaining===130',
       'Level '+level+' '+(north?'north':'south')+' gate uses all three smaller flank groups');
     check('!globalPolicyAlly.isAmbush','Level '+level+' gate beat leaves allies uncounted');
+    check('enemiesList.filter(e=>e.isAmbush&&(e.eType==="AERIAL"||e.eType==="AERIAL_PISTOL")).length===1',
+      'Level '+level+' gate opening halves three combined air slots down to one');
   }
 
   clearFight();
@@ -46,8 +50,10 @@ for(const level of [1,2,3,4,5,6,7]){
     window.globalPolicyFort=outpostFortDef(currentBiome);
     player.x=globalPolicyFort.x;player.y=globalPolicyFort.y;
     triggerOutpostAmbush(globalPolicyFort);`);
-  check('enemiesList.filter(e=>e.isAmbush).length===30&&nm0AmbushKills===150&&window.ambushSpawnsRemaining===120',
-    'Level '+level+' relay uses thirty initial attackers and 120 reserves');
+  check('enemiesList.filter(e=>e.isAmbush).length===20&&nm0AmbushKills===150&&window.ambushSpawnsRemaining===130',
+    'Level '+level+' relay uses twenty initial attackers and 130 reserves');
+  check('enemiesList.filter(e=>e.isAmbush&&(e.eType==="AERIAL"||e.eType==="AERIAL_PISTOL")).length===1',
+    'Level '+level+' relay opening halves three combined air slots down to one');
   for(const [i,count] of [2,2,3,2,3].entries()){
     probe(`enemiesList=[globalPolicyAlly];frameCount=${120+i*24};maintainOutpostMuster();`);
     check(`enemiesList.filter(e=>e.isAmbush).length===${count}`,
@@ -72,8 +78,8 @@ for(const level of [1,2,3,4,5,6,7]){
 
 // The bespoke Grey Fatigue encounter uses the same reduced-batch policy.
 probe('currentLevel=currentBiome=4;');clearFight();probe('triggerLvl4Ambush();');
-check('nm0AmbushKills===150&&window.ambushSpawnsRemaining===120&&enemiesList.filter(e=>e.isAmbush).length===30',
-  'Grey Fatigue opening retains thirty attackers and 120 reserves');
+check('nm0AmbushKills===150&&window.ambushSpawnsRemaining===130&&enemiesList.filter(e=>e.isAmbush).length===20',
+  'Grey Fatigue opening retains twenty attackers and 130 reserves');
 check('enemiesList.filter(e=>e.isAmbush).every(e=>e.eType==="NM0_GREY_FATIGUE")',
   'The bespoke encounter keeps its authored enemy type');
 console.log(checks+' cross-level NM-0 policy checks passed across sectors 1–7.');

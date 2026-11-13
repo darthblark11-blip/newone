@@ -486,14 +486,31 @@ function player3DPose(actor, options = {}) {
     }
   });
   if(!options.skeleton) {
-    if(armored){oval('vest',p.chest,torsoDepth*1.06,torsoWidth*1.04,torsoLength*1.03,[91,104,76],'armor');oval('helmet',p.head,7.1,7.3,7.5,[74,85,74],'helmet');oval('visor',add(p.head,mul(forward,1)),6.7,6.9,7.5,[84,110,124],'headwear');}
+    // The helmet mesh is a rigid, open-bottom shell authored around the unit
+    // head. Mount it directly in the head's frame at the same uniform radius.
+    // The old inflated ellipsoid and +2 lift pulled its rim around the whole
+    // face/neck, which read as cloth and obscured the exposed skin underneath.
+    const helmet=(color,tag='headwear')=>oval('helmet',p.head,headRadius,headRadius,headRadius,color,tag,headBasis);
+    const armoredGuard=!c.isPlayer&&c.eType==='ARMORED_STANDARD';
+    if(armored){
+      oval('vest',p.chest,torsoDepth*1.06,torsoWidth*1.04,torsoLength*1.03,[91,104,76],'armor');
+      if(!armoredGuard||c.hp>50){
+        helmet(armoredGuard?[43,49,58]:[74,85,74],'helmet');
+        if(!armoredGuard) {
+          // A small front window sits beneath the hard brow. It retains the
+          // armor's visor without using the former whole-head vertical wrap.
+          const visorCenter=add(add(p.head,mul(headBasis.x,headRadius*.08)),mul(headBasis.z,headRadius*.05));
+          oval('visor',visorCenter,headRadius,headRadius,headRadius*.55,[84,110,124],'headwear',headBasis);
+        }
+      }
+    }
     else if(chemist){if(nativeFrames)fittedOval('coat',p.chest,p.torsoProjectedLength,p.torsoProjectedWidth,torsoLength,palette.shirt,'coat',basis,p.chestHeading);else oval('coat',p.chest,torsoDepth*1.02,torsoWidth*1.02,torsoLength*1.07,palette.shirt,'coat');}
     else if(ninja)oval('hood',p.head,6.6,6.8,7.4,[22,23,30],'headwear');
     else if(cowboy)oval('cowboy_hat',add(p.head,mul(basis.z,4)),6.2,6.5,4.5,[108,80,46],'headwear');
     else if(!c.isPlayer&&c.eType==='ARMORED_STANDARD') {
       if(nativeFrames)fittedOval('vest',p.chest,p.torsoProjectedLength*.94,p.torsoProjectedWidth*.90,torsoLength*1.24,[100,104,112],'armor',basis,p.chestHeading);
       else oval('vest',p.chest,torsoDepth*.94,torsoWidth*.90,torsoLength*1.24,[100,104,112],'armor');
-      if(c.hp>50)oval('helmet',p.head,6.8,6.8,6.8,[43,49,58],'helmet');
+      if(c.hp>50)helmet([43,49,58],'helmet');
     }
     else {
       const hat=safe(()=>headwearOf(identity),null);
@@ -502,8 +519,12 @@ function player3DPose(actor, options = {}) {
         const helmetColor=identity.eType==='NM0_CITY_GUARD'?[108,127,118]:identity.isMilitary?[40,80,40]:identity.eType==='NM0_GREY_FATIGUE'?[170,175,180]:[190,170,130];
         const color=wide?M.color(identity.hatCol,hat==='BANDIT_HAT'?[34,30,30]:[96,72,46]):helmetColor;
         if(wide&&nativeFrames)fittedOval('cowboy_hat',add(p.head,mul(basis.z,4)),hat==='BANDIT_HAT'?27:28,hat==='BANDIT_HAT'?25:26,4.5,color,'headwear',basis,p.chestHeading);
+        else if(hat==='HELMET'||hat==='NM0_HELMET')helmet(color);
         else oval(wide?'cowboy_hat':hat==='HOOD'||hat==='OCCULT_HOOD'?'hood':'helmet',add(p.head,mul(basis.z,wide?4:2)),wide?6.2:7.1,wide?6.5:7.3,wide?4.5:7.5,color,'headwear');
-      } else if(hat)oval(hat==='STETSON'?'cowboy_hat':hat==='HOOD'?'hood':'helmet',add(p.head,mul(basis.z,2)),hat==='STETSON'?6.2:7.1,hat==='STETSON'?6.5:7.3,hat==='STETSON'?4.5:7.5,[75,86,80],'headwear');
+      } else if(hat){
+        if(hat==='HELMET'||hat==='NM0_HELMET'||hat==='VISOR')helmet([75,86,80]);
+        else oval(hat==='STETSON'?'cowboy_hat':hat==='HOOD'?'hood':'helmet',add(p.head,mul(basis.z,2)),hat==='STETSON'?6.2:7.1,hat==='STETSON'?6.5:7.3,hat==='STETSON'?4.5:7.5,[75,86,80],'headwear');
+      }
     }
     if(!c.isPlayer&&c.eType==='BANDIT'&&nativeFrames) {
       fittedOval('vest',add(p.chest,mul(forward,-4)),p.torsoProjectedLength*.60,p.torsoProjectedWidth*1.10,torsoLength*1.26,

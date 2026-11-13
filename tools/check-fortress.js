@@ -533,7 +533,7 @@ console.log('\n== the liberation beat ==');
   ok('but the beat waits while the muster is still shooting',
      P('inFortCutscene') === false && P('!!outpostFortState(1).cutscenePending') === true);
   ok('and taking the fort does not switch its muster off under the sector\'s gate',
-     P('outpostFortState(1).musterOn') === true && P('outpostFortState(1).musterWaves') === 120,
+     P('outpostFortState(1).musterOn') === true && P('outpostFortState(1).musterWaves') === 130,
      'waves ' + P('outpostFortState(1).musterWaves') + ', on ' + P('outpostFortState(1).musterOn'));
 
   probe('enemiesList = enemiesList.filter(e => e.isFriendly || e.isOutpostGarrison || e.isPopulation);window.ambushSpawnsRemaining=0;outpostFortState(1).musterWaves=0;nm0AmbushKills=0;');
@@ -610,7 +610,7 @@ console.log('\n== the sector\'s own muster totals are unchanged ==');
          startAtLevel(1); nm0AmbushActive = false; window.ambushOrigin = 'sentinel';
          triggerGateAmbush(5400, false);`);
   ok('a Great Gate breach still asks for 150', P('nm0AmbushKills') === 150 &&
-     P('window.ambushKillsTotal') === 150 && P('window.ambushSpawnsRemaining') === 105,
+     P('window.ambushKillsTotal') === 150 && P('window.ambushSpawnsRemaining') === 130,
      P('nm0AmbushKills') + '/' + P('window.ambushKillsTotal') + '/' + P('window.ambushSpawnsRemaining'));
   ok('and spawns its waves against the map constants, not an origin',
      P('window.ambushOrigin') === null);

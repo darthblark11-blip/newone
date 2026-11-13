@@ -83,7 +83,7 @@ probe('triggerOutpostAmbush(testFort);');
 dropMasts();
 ok(P('outpostFortState(1).freed&&!outpostFortState(1).captured&&!outpostFortState(1).rosterGranted'), 'masts free the cohort without capturing or paying the fort');
 ok(P('outpostFortState(1).pendingRecruits.length===47&&enemiesList.filter(e=>e.isOutpostGarrison&&e.isFriendly&&!e.dead).length===47'), 'only the forty-seven spared guards enter its pending cohort');
-ok(P('outpostFortState(1).musterLeft===150&&outpostFortState(1).musterWaves===120&&nm0AmbushKills===150&&window.ambushSpawnsRemaining===120'), 'masts preserve the full gate fight and all unspawned reserves');
+ok(P('outpostFortState(1).musterLeft===150&&outpostFortState(1).musterWaves===130&&nm0AmbushKills===150&&window.ambushSpawnsRemaining===130'), 'masts preserve the full gate fight and all unspawned reserves');
 ok(P('!inFortCutscene&&!inWorldBuildingMenu&&!cityRelayTerritoryUnlocked()&&outpostFortDefs(1).length===1'), 'the active battle opens neither the liberation scene nor owned territory or successor');
 probe('window.fortCutsceneId="OUTPOST";finishFortCapture();openDirectiveWithGrant(1);');
 ok(P('poolLedger().popTotal===15&&!outpostFortState(1).rosterGranted'), 'early completion and manual Directive access cannot award the pending fort');

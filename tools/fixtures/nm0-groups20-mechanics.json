@@ -1,0 +1,30 @@
+{
+  "description": "Reviewed NM0 deployment-only changes: twenty combined opening bodies, exact half aerial opening quotas rounded down, and ten-to-five-percent aerial reinforcement probability. Earlier source locks remain intact; positions, combat, reserve debit and arrival timing are unchanged.",
+  "functions": {
+    "triggerGateAmbush": {
+      "previous": "0f2675d2ec9263ece26976b7f62ecb58fee367cb4c22a4feadf796b3a967b903",
+      "current": "2bd53d4b948a6b6c25240e4002b6df154bc69cc5d7a504ff28d39e9a28f8e542",
+      "reason": "Replace the three fifteen-body flank loops with seven/seven/six bodies, including one rather than three aerials; retain the full 150-person counter and existing approaches."
+    },
+    "spawnAmbushReinforcement": {
+      "previous": "daa944b961fa09ab421f589ffd5751d8b58e7decd7fc5ee3033cab97c693d84c",
+      "current": "44e4ede993aed5e5887ba6e73695c841fd5a9cb09b1d05fca8791cbd7f6c6405",
+      "reason": "Halve aerial probability to five percent while retaining ten percent heavy and every reserve, pursuit, spawn-position and Grey encounter branch."
+    },
+    "triggerOutpostAmbush": {
+      "previous": "485988011589f74eb8d2a2d92ed7d09cb915fb497a685e176f3e150834dee382",
+      "current": "cb5acfb03f3c2e8a196516f9aef07a8a1ea25cdd2cf97eafd175008e8e9bacc7",
+      "reason": "Allocate the twenty-body fort opening as seventeen standard, two heavy and one aerial; blocked stations still return their bodies to reserve."
+    },
+    "spawnFortWave": {
+      "previous": "63db97452d7d6a2a9bfcdfcefbbcc680d715fb91d627ad4d8dc965afaf65fd18",
+      "current": "cdb75bae69b8c9bd546739b0fe00d4b14b1904e528e01f627363e98de78d424f",
+      "reason": "Halve only the aerial probability to five percent while preserving ten percent heavy, reserve debit, identity and arrival placement."
+    },
+    "spawnNm0OpeningFlank": {
+      "previous": null,
+      "current": "09a25539fb36033d202736bc646db29596f3ff079c32ef3cfc265a254c7221f3",
+      "reason": "Extract the existing standard/heavy/aerial construction loops with their original spatial jitter and hostile factory."
+    }
+  }
+}

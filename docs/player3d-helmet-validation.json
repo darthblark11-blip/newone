@@ -1,0 +1,252 @@
+{
+  "after": {
+    "cases": [
+      {
+        "label": "Army east / native unarmed flag",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": false,
+        "helmet": true
+      },
+      {
+        "label": "Army north / native unarmed flag",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": false,
+        "helmet": true
+      },
+      {
+        "label": "Army west / native unarmed flag",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": false,
+        "helmet": true
+      },
+      {
+        "label": "Army south / native unarmed flag",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": false,
+        "helmet": true
+      },
+      {
+        "label": "Armored player",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": true,
+        "helmet": true
+      },
+      {
+        "label": "Armored crouch",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": true,
+        "helmet": true
+      },
+      {
+        "label": "NM0 city / native unarmed flag",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": false,
+        "helmet": true
+      },
+      {
+        "label": "Heavy guard / native unarmed flag",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": false,
+        "helmet": true
+      },
+      {
+        "label": "Army front opening",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": false,
+        "helmet": true
+      },
+      {
+        "label": "Armor front opening",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": true,
+        "helmet": true
+      },
+      {
+        "label": "Guard front opening",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": false,
+        "helmet": true
+      },
+      {
+        "label": "Guard / broken helmet",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": false,
+        "helmet": false
+      }
+    ],
+    "exposure": [
+      {
+        "label": "Army front opening",
+        "visibleSkin": 2183,
+        "bareSkin": 4668,
+        "fraction": 0.4676520994001714
+      },
+      {
+        "label": "Armor front opening",
+        "visibleSkin": 1356,
+        "bareSkin": 4668,
+        "fraction": 0.29048843187660667
+      },
+      {
+        "label": "Guard front opening",
+        "visibleSkin": 2183,
+        "bareSkin": 4668,
+        "fraction": 0.4676520994001714
+      }
+    ],
+    "gpuError": 0,
+    "stats": {
+      "draws": 18,
+      "meshUploads": 35,
+      "triangles": 8622,
+      "gpuDrawCalls": 450,
+      "contextLosses": 0,
+      "contextRestores": 0,
+      "resizes": 2,
+      "failures": 0,
+      "bufferCreates": 105,
+      "programCreates": 1,
+      "stainDraws": 0,
+      "lastDrawMs": 0.20000000298023224,
+      "totalDrawMs": 104.80000000447035
+    }
+  },
+  "before": {
+    "cases": [
+      {
+        "label": "Army east / native unarmed flag",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": false,
+        "helmet": true
+      },
+      {
+        "label": "Army north / native unarmed flag",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": false,
+        "helmet": true
+      },
+      {
+        "label": "Army west / native unarmed flag",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": false,
+        "helmet": true
+      },
+      {
+        "label": "Army south / native unarmed flag",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": false,
+        "helmet": true
+      },
+      {
+        "label": "Armored player",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": true,
+        "helmet": true
+      },
+      {
+        "label": "Armored crouch",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": true,
+        "helmet": true
+      },
+      {
+        "label": "NM0 city / native unarmed flag",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": false,
+        "helmet": true
+      },
+      {
+        "label": "Heavy guard / native unarmed flag",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": false,
+        "helmet": true
+      },
+      {
+        "label": "Army front opening",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": false,
+        "helmet": true
+      },
+      {
+        "label": "Armor front opening",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": true,
+        "helmet": true
+      },
+      {
+        "label": "Guard front opening",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": false,
+        "helmet": true
+      },
+      {
+        "label": "Guard / broken helmet",
+        "drawn": true,
+        "meshDraws": 1,
+        "isArmed": false,
+        "helmet": false
+      }
+    ],
+    "exposure": [
+      {
+        "label": "Army front opening",
+        "visibleSkin": 1542,
+        "bareSkin": 4668,
+        "fraction": 0.33033419023136246
+      },
+      {
+        "label": "Armor front opening",
+        "visibleSkin": 197,
+        "bareSkin": 4668,
+        "fraction": 0.04220222793487575
+      },
+      {
+        "label": "Guard front opening",
+        "visibleSkin": 625,
+        "bareSkin": 4668,
+        "fraction": 0.13389031705227078
+      }
+    ],
+    "gpuError": 0,
+    "stats": {
+      "draws": 18,
+      "meshUploads": 35,
+      "triangles": 8150,
+      "gpuDrawCalls": 436,
+      "contextLosses": 0,
+      "contextRestores": 0,
+      "resizes": 2,
+      "failures": 0,
+      "bufferCreates": 105,
+      "programCreates": 1,
+      "stainDraws": 0,
+      "lastDrawMs": 0.3999999985098839,
+      "totalDrawMs": 45.900000002235174
+    }
+  },
+  "nodeChecks": 417,
+  "physicalPhonePerformanceMeasured": false
+}

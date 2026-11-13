@@ -16,6 +16,14 @@ putting every hidden variant in a standard GLB would make them all appear at onc
 GLB materials retain the palette and toon metadata. The browser implements the
 actual three-band material; Blender's Shader-to-RGB nodes are not a glTF feature.
 
+The helmet is a rigid, open-bottom shell with a separate rolled rim, projecting
+brow peak and relieved rear edge. It leaves the lower head exposed; the cloth
+hood keeps its deeper wrap. Both use the head-centered origin with +X forward.
+The helmet's local bounds are X [-1.20995, 1.37], Y [-1.1394, 1.1394],
+Z [-0.132964, 1.20]. `player-helmet.glb` contains the rigged helmet variant.
+`player-helmet.png` shows it worn, and `player-headwear-comparison.png` compares
+the helmet on the left with the unchanged hood on the right.
+
 ## Regenerate
 
 From the repository root:

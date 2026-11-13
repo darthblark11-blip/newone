@@ -1,63 +1,50 @@
-# NM-0 batches reduced by 40%
+# NM-0 openings: groups of 20
 
-The initial ambush groups are smaller, with counted enemies held back in
-reserve. Mission kill targets, spawn locations, per-enemy behavior and the
-existing reinforcement delays remain unchanged. The p5 1.9.0 rendering fix
-and hostile firing coordinator remain active; allied firing is unrestricted.
+NM-0 ambushes now open with 20 enemies total per encounter, spread across the
+existing approaches. This is the combined opening, not 20 per flank. The
+mission still accounts for every original defender through its reserve pool.
 
-These settings are global, including every sector's tower/gate entry points,
-Level 4's Grey Fatigue encounter, all overworld relay forts and Level 1's new
-southwest relay. Level 2 was the profiling scene, not a runtime restriction.
-The smaller openings, reserve accounting and fort refill cadence must not be
-reduced a second time when applying this policy to another level.
+| Encounter | Previous opening | New opening | New aerial count | Reserve after opening |
+| --- | ---: | ---: | ---: | ---: |
+| Tower, both flanks combined | 60 | 20 | 2, previously 4 | 280 of the same 300 total |
+| Gate, all three approaches combined | 45 | 20 | 1, previously 3 | 130 of the same 150 total |
+| Relay fort | 30 | 20 | 1, previously 3 | At least 130 of the same 150 total |
+| Grey Fatigue | 30 | 20 | 0 | 130 of the same 150 total |
+| Scripted ambush save restoration | Up to 60 | Up to 20 | 4% allocation, previously 8% | Remaining budget minus restored enemies |
 
-| Spawn | Before | After | Counted reserves after opening |
-| --- | ---: | ---: | ---: |
-| Tower ambush, both flanks combined | 100 | 60 | 240 toward the same 300-kill target |
-| Each gate flank group | 25 | 15 | 105 after all three groups toward the same 150-kill target |
-| Grey Fatigue opening | 50 | 30 | 120 toward the same 150-kill target |
-| Generated fort opening | 50 | 30 | At least 120 toward the same 150 generated enemies |
-| Scripted ambush reload cap | 100 | 60 | Remaining kills minus the exact restored count |
-| Fort refill floor | 10 | 6 | Existing reserve pool |
+Whole-unit aerial quotas round down when halved. Tower composition is 17
+standard soldiers, one heavy and two aerial units; gates use 18 standard, one
+heavy and one aerial. Forts use 17 standard, two heavy and one aerial. Blocked
+fort stations remain in reserve instead of spawning inside collision geometry.
 
-Individual kill-triggered reinforcements still arrive one at a time after
-the existing 200–800 ms delay. Fort refill checks still run every 24 frames.
-Their former four-enemy batches now alternate between two and three:
-`2, 2, 3, 2, 3` over five phases gives 12 arrivals instead of 20, exactly
-40% less across five fully requested batches. A refill stops at the six-body
-floor or the remaining reserve, whichever comes first.
+Reinforcement rolls now allocate 5% to aerial units, down from 10%; their
+existing variant split remains in place. Heavy reinforcement probability stays
+at 10%. Grey Fatigue retains its authored ground-only type.
 
-The gate keeps three flank groups (75 → 45 actual opening bodies). The later
-[gate-isolation change](gate-ambush-isolation.md) counts all 45 toward its
-150-person target and holds 105 in reserve. The previous implementation counted
-only the last two groups, leaving fifteen extra uncounted actors.
+These settings apply across sectors, including tower and north/south gate
+entry points, overworld relay forts, and the Grey Fatigue encounter. Gate
+approaches divide the 20 slots as 7/7/6; tower flanks receive ten each. Separate
+encounters can merge while retaining their individual budgets and counted
+reserves. Allies are never tagged as ambush enemies.
 
-All original opening unit types remain. Whole-unit rounding determines their
-mix inside the smaller groups. The objective garrison remains separate;
-ambient wanderers now despawn instead of joining the relay quota. Blocked fort
-stations are added to reserves as before.
+Kill-triggered arrivals still replace one enemy after the existing 200–800 ms
+delay. Fort emergency refill checks still run every 24 frames, with the existing
+`2, 2, 3, 2, 3` phases stopping at a six-body floor or the remaining reserve.
+The 20-body policy describes openings and save restoration, rather than a new
+global cap on merged encounters or independently pending refill callbacks.
 
-Reload composition now allocates the exact restored count: independently
-rounding every category upward would otherwise spawn 61 enemies for a cap
-of 60, or exceed the remaining kill count near the end of a fight.
+Validation:
 
-Validation passed:
+- `check-nm0-batch-sizes.js`: 71 checks covering openings, aerial quotas,
+  merges, allies, reserve conservation, full 300/150-enemy drains, replacement
+  timers, blocked stations, refill timing, and old/new save restoration.
+- `check-nm0-global-policy.js`: 128 cross-sector checks across sectors 1–7,
+  including both reinforcement paths and existing hostile firing coordination.
+- Gate isolation: 179 checks; fortress: 93 checks; fort survivors: 36 checks.
+- `check-nm0-mechanics-parity.js --deployments-only`: exact source guards for
+  five deployment functions and eleven policy constants. The full parity
+  suite retains an unrelated, pre-existing `enemyCoverDiveGoal`/forest-timber
+  mismatch, also reproduced on the unchanged prior commit.
 
-- `node tools/check-nm0-global-policy.js`: 100 cross-level checks exercise
-  native tower and north/south gate entry points, relay openings and all five
-  refill phases across sectors 1–7. Actual crowded pistol firing emits 24
-  projectiles per sector; allies remain unrestricted. The separate Grey
-  opening retains its authored unit type and reserve count. This verifies
-  the existing rollout without changing runtime code or claiming new FPS.
-- 56 native batch checks: openings, merges, ally tagging, reserve conservation,
-  complete kill/reserve drains, blocked fort stations, refill timing and
-  reload counts for 0, 1, 2, 7, 59, 60, 61, 150 and 300 remaining kills.
-- Fortress lifecycle and hostile-coordinator checks.
-- Mechanics source guard, permitting only the precise authorized batch edits
-  in addition to the existing hostile firing gates; syntax/whitespace checks.
-- Browser smoke using the uploaded p5 1.9.0: 60 initial tower ambushers,
-  240 reserves, 15 measured frames, no browser errors or frame faults.
-
-The battle profiler accepts the new 60-enemy opening and retains compatibility
-with older baseline sources that spawned 100. No new FPS result is claimed
-for this gameplay tuning change.
+The battle profiler accepts the current 20-body opening and historical 60/100
+baselines. These gameplay settings do not establish physical-phone frame rates.

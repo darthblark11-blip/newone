@@ -157,6 +157,69 @@ def mesh_object(name, geometry, collection):
     return obj
 
 
+def rigid_helmet_geometry():
+    """A thin, open-bottom shell, not a second full head/cowl.
+
+    Local coordinates match the unit head: +X is the exposed face. The brow
+    ends above the eyes; the rear rim rises at its center to clear the nape.
+    Separate planar rim/lip surfaces keep the silhouette visibly rigid.
+    """
+    geometry=Geometry();sides=24;cx=-.06;rx=1.09;ry=1.08;top=1.20
+
+    def edge(angle):
+        facing=math.cos(angle)
+        return .04+.33*max(0,facing)**2-.16*max(0,-facing)**2+.18*max(0,-facing)**12
+
+    profile=[(1.0,0),(.985,.18),(.90,.49),(.73,.76),(.47,.93),(.18,.992)]
+    vertices=[]
+    for inner in [False,True]:
+        for radius,height in profile:
+            for j in range(sides):
+                angle=j*math.tau/sides
+                xradius=radius*rx-(.065 if inner else 0)
+                yradius=radius*ry-(.065 if inner else 0)
+                z=edge(angle)+(top-edge(angle))*height-(.055 if inner else 0)
+                vertices.append((cx+xradius*math.cos(angle),yradius*math.sin(angle),z))
+    count=len(profile)*sides;faces=[]
+    for inner in [False,True]:
+        offset=count if inner else 0
+        for i in range(len(profile)-1):
+            for j in range(sides):
+                face=(offset+i*sides+j,offset+i*sides+(j+1)%sides,
+                      offset+(i+1)*sides+(j+1)%sides,offset+(i+1)*sides+j)
+                faces.append(tuple(reversed(face)) if inner else face)
+        crown=len(vertices);vertices.append((cx,0,top-(.055 if inner else 0)))
+        last=offset+(len(profile)-1)*sides
+        for j in range(sides):
+            face=(crown,last+j,last+(j+1)%sides)
+            faces.append(tuple(reversed(face)) if inner else face)
+    # Connect the open head aperture through a real, thin shell edge. There
+    # is deliberately no face spanning the opening and no lower neck wrap.
+    for j in range(sides):
+        faces.append((j,count+j,count+(j+1)%sides,(j+1)%sides))
+    geometry.add(vertices,faces,'armor',True)
+
+    # Angular rolled edge: four surface strips around the open aperture.
+    band=[(1.055,-.065),(1.055,.025),(.995,.055),(.995,-.085)]
+    vertices=[]
+    for radius,lift in band:
+        for j in range(sides):
+            angle=j*math.tau/sides
+            vertices.append((cx+rx*radius*math.cos(angle),ry*radius*math.sin(angle),edge(angle)+lift))
+    for i in range(4):
+        faces=[(i*sides+j,i*sides+(j+1)%sides,((i+1)%4)*sides+(j+1)%sides,((i+1)%4)*sides+j) for j in range(sides)]
+        geometry.add(vertices,faces,'armor' if i==1 else 'metal',False)
+
+    # A short beveled brow peak projects forward; it does not enclose the
+    # face. Its planar top and dark edge read as a helmet at game scale.
+    lip=[(.62,-.79,.31),(1.28,-.57,.27),(1.37,-.31,.25),
+         (1.37,.31,.25),(1.28,.57,.27),(.62,.79,.31)]
+    vertices=lip+[(x,y,z+.095) for x,y,z in lip]
+    geometry.add(vertices,[tuple(reversed(range(6))),tuple(range(6,12))],'armor')
+    geometry.add(vertices,[(j,(j+1)%6,(j+1)%6+6,j+6) for j in range(6)],'metal')
+    return geometry
+
+
 def make_library(collection):
     geometries={}
     # A round, featureless silhouette in every view, including fallen bodies.
@@ -189,7 +252,7 @@ def make_library(collection):
         ('shin','pants',[(-.5,.34,.34),(-.27,.43,.43),(.26,.32,.31),(.5,.27,.27)])]:
         geometries[name]=Geometry().loft(radii,material,sides=12)
     geometries['foot']=Geometry().box((0,0,-.06),(1,.55,.19),'boots').box((-.04,0,.085),(.88,.47,.27),'boots').box((-.27,0,.22),(.32,.39,.39),'boots')
-    geometries['helmet']=Geometry().sphere((-.10,0,.24),(1.09,1.08,.94),'armor').box((.51,0,.20),(1.15,1.98,.13),'armor')
+    geometries['helmet']=rigid_helmet_geometry()
     geometries['visor']=Geometry().box((.95,0,.03),(.22,1.80,.65),'glass').box((.95,0,.40),(.25,1.98,.15),'metal')
     hood=Geometry().sphere((-.10,0,.11),(1.13,1.10,1.10),'ninja')
     # Cowl is open at the face, retaining a visible inset skin surface.
@@ -423,6 +486,10 @@ def validate(data):
     triangles=sum(len(data['meshes'][name]['indices'])//3*(2 if name in ['upper_arm','forearm','hand','thigh','shin','foot'] else 1) for name in base)
     triangles+=4*len(data['meshes']['joint']['indices'])//3
     assert triangles<10000,triangles
+    helmet=data['meshes']['helmet'];hood=data['meshes']['hood']
+    assert min(helmet['positions'][2::3])>-.20,'Helmet must leave the lower head and neck exposed'
+    assert min(helmet['positions'][2::3])-min(hood['positions'][2::3])>.60,'Helmet must have a shallower opening than the cloth hood'
+    assert max(helmet['positions'][0::3])>1.25,'Rigid helmet brow peak is missing'
     print('PLAYER_MESH_VALID',len(data['meshes']),'semantic meshes,',triangles,'base triangles')
 
 
@@ -488,9 +555,51 @@ def stage_and_render(skip):
         scene.render.filepath=str(OUT/('player-'+name+'.png'))
         if not skip:bpy.ops.render.render(write_still=True)
     camera.location=views['three-quarter'];camera.rotation_euler=(Vector((0,0,.92))-camera.location).to_track_quat('-Z','Y').to_euler()
+    if not skip:render_headwear_previews()
 
 
-def export_glb(rig):
+def render_headwear_previews():
+    """Render the actual source helmet and unchanged cloth hood for review."""
+    scene=bpy.context.scene;camera=scene.camera
+    sources=[obj for obj in bpy.data.objects if obj.type=='MESH' and 'semantic' in obj]
+    helmet=next(obj for obj in sources if obj['semantic']=='helmet')
+    hood=next(obj for obj in sources if obj['semantic']=='hood')
+    head=next(obj for obj in sources if obj['semantic']=='head')
+    visible={obj.name:obj.hide_render for obj in sources}
+    camera_matrix=camera.matrix_world.copy();ortho=camera.data.ortho_scale
+    resolution=(scene.render.resolution_x,scene.render.resolution_y)
+    render_path=scene.render.filepath
+    comparison=bpy.data.collections.new('Temporary headwear comparison');scene.collection.children.link(comparison)
+    try:
+        # A full-player preview also proves that the opening is above the
+        # face, rather than disguising an unchanged full-head cowl by color.
+        helmet.hide_render=False
+        camera.location=(4,-6,3.4)
+        camera.rotation_euler=(Vector((0,0,.92))-camera.location).to_track_quat('-Z','Y').to_euler()
+        camera.data.ortho_scale=2.25
+        scene.render.resolution_x=640;scene.render.resolution_y=800
+        scene.render.filepath=str(OUT/'player-helmet.png');bpy.ops.render.render(write_still=True)
+        for obj in sources:obj.hide_render=True
+        for offset,wear in [(-.26,helmet),(.26,hood)]:
+            for original in [head,wear]:
+                obj=original.copy();comparison.objects.link(obj)
+                obj.location.y+=offset;obj.hide_render=False;obj.hide_viewport=False;obj.hide_set(False)
+        target=Vector((head.location.x,0,head.location.z))
+        camera.location=(5,-1,3.5)
+        camera.rotation_euler=(target-camera.location).to_track_quat('-Z','Y').to_euler()
+        camera.data.ortho_scale=.95
+        scene.render.resolution_x=1120;scene.render.resolution_y=640
+        scene.render.filepath=str(OUT/'player-headwear-comparison.png');bpy.ops.render.render(write_still=True)
+    finally:
+        for obj in list(comparison.objects):bpy.data.objects.remove(obj,do_unlink=True)
+        bpy.data.collections.remove(comparison)
+        for obj in sources:obj.hide_render=visible[obj.name]
+        camera.matrix_world=camera_matrix;camera.data.ortho_scale=ortho
+        scene.render.resolution_x,scene.render.resolution_y=resolution
+        scene.render.filepath=render_path
+
+
+def export_glb(rig,filename='player.glb'):
     # glTF uses standard materials. Keep original editable toon node graphs in
     # the .blend and export their palette as portable base colors, not a false
     # promise that Shader-to-RGB is a glTF shader feature.
@@ -519,13 +628,23 @@ def export_glb(rig):
             for slot in obj.material_slots:
                 saved.append((slot,slot.material));slot.material=replacement.get(slot.material.name,slot.material)
     bpy.context.view_layer.objects.active=rig
-    bpy.ops.export_scene.gltf(filepath=str(OUT/'player.glb'),export_format='GLB',use_selection=True,
+    bpy.ops.export_scene.gltf(filepath=str(OUT/filename),export_format='GLB',use_selection=True,
                               export_animations=True,export_skins=True,export_extras=True,export_apply=False)
     for slot,material in saved:slot.material=material
     for obj in SOURCE:
         obj.hide_render,obj.hide_viewport,hidden=visibility[obj.name];obj.hide_set(hidden)
         for modifier in obj.modifiers:
             if modifier.type=='SOLIDIFY':modifier.show_viewport,modifier.show_render=outline_state[(obj.name,modifier.name)]
+
+
+def export_helmet_variant(rig):
+    helmet=next(obj for obj in SOURCE if obj['semantic']=='helmet')
+    hidden=(helmet.hide_render,helmet.hide_viewport,helmet.hide_get())
+    try:
+        helmet.hide_render=False;helmet.hide_viewport=False;helmet.hide_set(False)
+        export_glb(rig,'player-helmet.glb')
+    finally:
+        helmet.hide_render,helmet.hide_viewport,hide_set=hidden;helmet.hide_set(hide_set)
 
 
 def main():
@@ -548,9 +667,10 @@ def main():
         SOURCE.extend(obj for obj in bpy.data.objects if obj.type=='MESH' and 'semantic' in obj)
         rig=bpy.data.objects.get('PlayerRig')
         if not rig:raise RuntimeError('PlayerRig is missing from the editable source')
-        sync_source_edits();validate_scene(rig);export_compact();export_glb(rig)
+        sync_source_edits();validate_scene(rig);export_compact();export_glb(rig);export_helmet_variant(rig)
         if not args.skip_renders:
             scene=bpy.context.scene;scene.render.filepath=str(OUT/'player-three-quarter.png');bpy.ops.render.render(write_still=True)
+            render_headwear_previews()
         print('PLAYER_EDITED_EXPORT_READY',str(OUT));return
     bpy.ops.object.select_all(action='SELECT');bpy.ops.object.delete(use_global=False)
     for name,rgb in PALETTE.items():MATERIALS[name]=toon_material(name,rgb)
@@ -559,13 +679,15 @@ def main():
     body=bpy.data.collections.new('Rigged player');bpy.context.scene.collection.children.link(body)
     equipment=bpy.data.collections.new('Equipment variants');bpy.context.scene.collection.children.link(equipment)
     make_library(library);rig=assemble(body,equipment);validate_scene(rig);data=export_compact()
-    export_glb(rig);stage_and_render(args.skip_renders)
+    export_glb(rig);export_helmet_variant(rig);stage_and_render(args.skip_renders)
     bpy.ops.object.select_all(action='DESELECT');rig.hide_set(False);rig.select_set(True);bpy.context.view_layer.objects.active=rig
     bpy.context.scene['PlayerAssetSchema']=1
     bpy.context.scene['Regenerate']='blender --background --factory-startup --python tools/blender-player.py'
     bpy.ops.wm.save_as_mainfile(filepath=str(OUT/'player.blend'))
     manifest={'schemaVersion':1,'source':'player.blend','portable':'player.glb','runtime':'player-mesh.json',
               'previews':['player-'+v+'.png' for v in ['three-quarter','front','back','overhead']],
+              'helmetVariant':'player-helmet.glb','helmetPreview':'player-helmet.png',
+              'headwearComparison':'player-headwear-comparison.png',
               'meshCount':len(data['meshes']),'boneCount':len(rig.data.bones),
               'runtimeMaterial':'Three-band world-lit shader; glTF retains palette and toon metadata, not Blender node execution.'}
     (OUT/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')

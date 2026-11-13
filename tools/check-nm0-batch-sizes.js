@@ -89,19 +89,19 @@ function drain(name, total, fort = false) {
 console.log('== gate opening and merge ==');
 fresh(2);
 probe('triggerGateAmbush(3000, false);');
-ok('gate keeps all three authored fifteen-body groups', P('enemiesList.length') === 46);
-ok('gate counts all three spawned groups against the same total', live() === 45 && reserve() === 105 && !P('!!batchAlly.isAmbush'));
-ok('gate composition remains 13 standard, 1 heavy, 1 aerial per group',
-  P('enemiesList.filter(e => !e.isFriendly && e.eType === "ARMORED_STANDARD").length') === 39 &&
-  P('enemiesList.filter(e => e.eType === "ARMORED").length') === 3 &&
-  P('enemiesList.filter(e => e.eType === "AERIAL").length') === 3);
+ok('gate keeps all three approach groups within twenty bodies combined', P('enemiesList.length') === 21);
+ok('gate counts every spawned body against the same total', live() === 20 && reserve() === 130 && !P('!!batchAlly.isAmbush'));
+ok('gate composition is eighteen standard, one heavy, one aerial (three air slots halved down)',
+  P('enemiesList.filter(e => !e.isFriendly && e.eType === "ARMORED_STANDARD").length') === 18 &&
+  P('enemiesList.filter(e => e.eType === "ARMORED").length') === 1 &&
+  P('enemiesList.filter(e => e.eType === "AERIAL" || e.eType === "AERIAL_PISTOL").length') === 1);
 closed('gate', 150);
 drain('gate', 150);
 
 fresh(2);
 probe('triggerGateAmbush(3000, false); triggerGateAmbush(-1800, true);');
 ok('merged gate breaches append two smaller openings without tagging the ally',
-  P('enemiesList.length') === 91 && live() === 90 && reserve() === 210 && !P('!!batchAlly.isAmbush'));
+  P('enemiesList.length') === 41 && live() === 40 && reserve() === 260 && !P('!!batchAlly.isAmbush'));
 closed('merged gates', 300);
 
 console.log('== native tower scene and merge ==');
@@ -117,22 +117,22 @@ function towerOpening(mergeGate) {
     P('enemiesList.filter(e => e.isPopulation && e.isFriendly && !e.dead && !e.isAmbush).length') === allies);
 }
 towerOpening(false);
-ok('native phase seven creates sixty tagged tower hostiles', live() === 60 && reserve() === 240 && P('window.ambushKind === "TOWER"'));
-ok('tower composition is two groups of 26 standard, 2 heavy, 2 aerial',
-  P('enemiesList.filter(e => e.isAmbush && e.eType === "ARMORED_STANDARD").length') === 52 &&
-  P('enemiesList.filter(e => e.isAmbush && e.eType === "ARMORED").length') === 4 &&
-  P('enemiesList.filter(e => e.isAmbush && e.eType === "AERIAL").length') === 4);
+ok('native phase seven creates twenty tagged tower hostiles', live() === 20 && reserve() === 280 && P('window.ambushKind === "TOWER"'));
+ok('tower composition is seventeen standard, one heavy, two aerial (half the former four)',
+  P('enemiesList.filter(e => e.isAmbush && e.eType === "ARMORED_STANDARD").length') === 17 &&
+  P('enemiesList.filter(e => e.isAmbush && e.eType === "ARMORED").length') === 1 &&
+  P('enemiesList.filter(e => e.isAmbush && (e.eType === "AERIAL" || e.eType === "AERIAL_PISTOL")).length') === 2);
 closed('tower', 300);
 probe('enemiesList = enemiesList.filter(e => e.isFriendly || e.isAmbush);');
 drain('tower', 300);
 towerOpening(true);
-ok('tower merges sixty live and 240 held into the active gate fight', live() === 105 && reserve() === 345 && P('window.ambushKind === "TOWER"'));
+ok('tower merges twenty live and 280 held into the active gate fight', live() === 40 && reserve() === 410 && P('window.ambushKind === "TOWER"'));
 closed('gate plus tower', 450);
 
 console.log('== Grey Fatigue opening ==');
 fresh(4);
 probe('triggerLvl4Ambush();');
-ok('Grey Fatigue opens with thirty counted hostiles and 120 held', live() === 30 && reserve() === 120 &&
+ok('Grey Fatigue opens with twenty counted hostiles and 130 held', live() === 20 && reserve() === 130 &&
   P('enemiesList.filter(e => e.isAmbush).every(e => e.eType === "NM0_GREY_FATIGUE")') && !P('!!batchAlly.isAmbush'));
 closed('Grey Fatigue', 150);
 drain('Grey Fatigue', 150);
@@ -150,7 +150,8 @@ function fortOpening(conscripts = 0, blocked = false) {
 }
 fortOpening(3);
 const generated = P('enemiesList.filter(e => e.isAmbush && e.isOutpost).length');
-ok('fort creates at most thirty new station bodies and keeps at least 120 in reserve', generated > 0 && generated <= 30 && reserve() >= 120);
+ok('fort creates at most twenty new station bodies and keeps at least 130 in reserve', generated > 0 && generated <= 20 && reserve() >= 130);
+ok('fort opening halves the old three aerial stations down to one', P('enemiesList.filter(e=>e.isAmbush&&(e.eType==="AERIAL"||e.eType==="AERIAL_PISTOL")).length')===1);
 ok('existing fort-area overworld hostiles despawn without enlarging the 150-body battle',
   P('enemiesList.filter(e => e.isAmbush && e.eType === "NM0_ROOKIE").length') === 0 &&
   P('outpostFortState(1).musterTotal') === 150 && !P('!!batchAlly.isAmbush'));
@@ -159,7 +160,7 @@ drain('isolated fort', 150, true);
 
 fortOpening(0, true);
 ok('blocked ground stations become extra reserves while aerial stations still spawn',
-  live() > 0 && live() < 30 && reserve() === 150 - live() &&
+  live() > 0 && live() < 20 && reserve() === 150 - live() &&
   P('enemiesList.filter(e => e.isAmbush).every(e => e.eType === "AERIAL")'));
 closed('blocked fort', 150);
 
@@ -190,11 +191,53 @@ ok('five full fort refills total twelve arrivals, 40% below the previous twenty'
 
 console.log('== scripted fight reload cap ==');
 towerOpening(false);
-for (const left of [300, 150, 61, 60, 59, 7, 2, 1, 0]) {
+for (const left of [300, 150, 61, 60, 59, 21, 20, 19, 7, 2, 1, 0]) {
   probe(`nm0AmbushKills = ${left}; killcamMode = false; saveGame(); loadGame();`);
-  const active = Math.min(60, left);
+  const active = Math.min(20, left);
   ok('reload with ' + left + ' owed creates exactly ' + active + ' hostiles', live() === active && reserve() === left - active && P('nm0AmbushKills') === left);
   ok('reload keeps allies outside the counted ambush', P('enemiesList.filter(e => e.isFriendly).every(e => !e.isAmbush)'));
+}
+
+console.log('== old saves, gate/fort restoration and halved air ==');
+towerOpening(false);
+probe('nm0AmbushKills=77;window.ambushSpawnsRemaining=17;killcamMode=false;saveGame();');
+const legacy=JSON.parse(slot);legacy.ambushSpawnsRemaining=17;slot=JSON.stringify(legacy);
+probe('loadGame();');
+ok('a legacy sixty-body save restores twenty and banks all other outstanding bodies',
+  live()===20&&reserve()===57&&P('nm0AmbushKills')===77);
+ok('scripted restore halves the old eight-percent air share to one of twenty',
+  P('enemiesList.filter(e=>e.isAmbush&&(e.eType==="AERIAL"||e.eType==="AERIAL_PISTOL")).length')===1);
+fresh(2);probe('triggerGateAmbush(3000,false);saveGame();loadGame();');
+ok('gate reload preserves its complete quota within the existing six-body restore floor',
+  live()===6&&reserve()===144&&P('nm0AmbushKills')===150);
+fortOpening();probe('saveGame();loadGame();');
+ok('fort reload preserves its complete quota and persistent muster ledger',
+  live()===6&&reserve()===144&&P('nm0AmbushKills')===150&&P('outpostFortState(currentBiome).musterLeft')===150);
+
+function forceUnitRoll(value,fort,callback){
+  const original=ctx.random;let plain=0;
+  ctx.random=(a,b)=>{
+    if(a===undefined)return ++plain===(fort?1:2)?value:.5;
+    if(Array.isArray(a))return a[0];return b===undefined?a*.5:(a+b)*.5;
+  };
+  try{callback();}finally{ctx.random=original;}
+}
+for(const fort of [false,true]){
+  if(fort)fortOpening();else{fresh(2);probe('triggerGateAmbush(3000,false);');}
+  timers.length=0;let air=0,heavy=0,standard=0;
+  const opening=live(),held=reserve();
+  for(let i=0;i<100;i++){
+    assert.ok(killOne(),'reinforcement quota has an active body');
+    assert.equal(timers.length,1,'one kill retains one deferred arrival');
+    const arrival=timers.shift();
+    forceUnitRoll((i+.5)/100,fort,arrival.fn);
+    const type=P('enemiesList[enemiesList.length-1].eType');
+    if(type==='AERIAL'||type==='AERIAL_PISTOL')air++;else if(type==='ARMORED')heavy++;else if(type==='ARMORED_STANDARD')standard++;
+    assert.equal(live(),opening,'one-for-one reinforcements keep the smaller opening field');
+    assert.equal(live()+reserve(),P('nm0AmbushKills'),'a replacement never changes the outstanding quota');
+  }
+  ok((fort?'fort':'gate')+' reinforcement air is five of a hundred, with ten heavies and 85 regulars',air===5&&heavy===10&&standard===85);
+  ok((fort?'fort':'gate')+' halved air consumes exactly the same reserve budget',reserve()===held-100&&P('nm0AmbushKills')===50);
 }
 
 console.log(`\n${checks}/${checks} NM-0 batch and reserve checks passed`);

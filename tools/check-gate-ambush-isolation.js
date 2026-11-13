@@ -75,7 +75,7 @@ ok('native city wounds are banked as a living resident', P('getBiomeState(1).cit
 ok('living checkpoint removal creates no settlement losses', P('!chunkPop.has("15,15")&&JSON.stringify(Array.from(popLosses))===JSON.stringify(beforeIsolation.losses)'));
 ok('despawning creates no score or casualties', P('globalPopulationCount()===beforeIsolation.count&&sectorLedger(1).popKilled===beforeIsolation.lost&&totalKills===beforeIsolation.kills&&score===beforeIsolation.score'));
 ok('finite population, freed recruits and combat allies retain identity and wounds', P('[keepPopulation,keepFreed,keepMilitary,keepCombat].every(e=>enemiesList.includes(e))&&keepPopulation.hp===137&&keepFreed.hp===129&&keepMilitary.hp===173&&keepCombat.hp===151'));
-ok('all 45 opening soldiers are counted with 105 reserves', P('enemiesList.filter(e=>e.isAmbush).length===45&&nm0AmbushKills===150&&window.ambushSpawnsRemaining===105'));
+ok('all twenty opening soldiers are counted with 130 reserves', P('enemiesList.filter(e=>e.isAmbush).length===20&&nm0AmbushKills===150&&window.ambushSpawnsRemaining===130'));
 ok('sector travel stays locked during the fight', P('!canTravel("SOUTH")'));
 
 probe(`window.beforeRefresh=enemiesList.length;player.x=18000;player.y=18000;
