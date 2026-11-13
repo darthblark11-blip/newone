@@ -70,8 +70,8 @@ for(const level of [1,2,3,4,5,6,7]){
       e.fireTimer=e.reloadTimer=e.stunTimer=0;e.ammo=17;enemiesList.push(e);
     }
     for(const e of enemiesList)if(e!==globalPolicyAlly)e.fire(Math.PI,null,player);`);
-  check('bullets.length===24&&_hostileFrontline.limited',
-    'Level '+level+' native firearm path retains the shared twenty-four front-rank owners');
+  check('bullets.length===8&&_hostileFrontline.limited',
+    'Level '+level+' native firearm path retains the shared eight active ranged owners');
   check('hostileFrontlineFireAllowed(globalPolicyAlly,player)',
     'Level '+level+' allies keep unrestricted firing');
 }

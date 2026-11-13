@@ -33,16 +33,16 @@ function fresh(count=40){
     window.gunners=enemiesList;window.decisions=()=>gunners.map(e=>hostileFrontlineFireAllowed(e,player));
     window.allowed=()=>gunners.filter(e=>hostileFrontlineFireAllowed(e,player));`);
 }
-for(const n of [0,1,24,31,32]){
+for(const n of [0,1,4,7,8]){
   fresh(n);ok(n+' gunners retain unrestricted firing',P('decisions().every(Boolean)'));
   ok(n+' gunners do not activate the limiter',P('!_hostileFrontline.limited'));
 }
-fresh(33);
-ok('The limiter activates at 33 eligible gunners',P('allowed().length===24&&_hostileFrontline.limited'));
-ok('A one-sided rush retains its nearest 24 gunners',P('allowed().every((e,i)=>e===gunners[i])'));
+fresh(9);
+ok('A ninth eligible gunner activates the shared eight-shooter limit',P('allowed().length===8&&_hostileFrontline.limited'));
+ok('A one-sided rush retains its nearest eight gunners',P('allowed().every((e,i)=>e===gunners[i])'));
 
 fresh(40);
-probe(`for(let d=0;d<8;d++){
+probe(`isHardMode=true;for(let d=0;d<8;d++){
   const a=-Math.PI+(d+.5)*Math.PI/4,r=500+d*10;
   gunners[d].x=Math.cos(a)*r;gunners[d].y=Math.sin(a)*r;
 }
@@ -50,21 +50,21 @@ for(let i=8;i<40;i++){
   const a=Math.PI/8,r=80+i;gunners[i].x=Math.cos(a)*r;gunners[i].y=Math.sin(a)*r;
 }`);
 ok('All eight occupied directions retain a firing owner',P(`(()=>{
-  const selected=allowed();return selected.length===24&&new Set(selected.map(e=>
+  const selected=allowed();return selected.length===8&&new Set(selected.map(e=>
     Math.min(7,Math.floor((Math.atan2(e.y,e.x)+Math.PI)*4/Math.PI)))).size===8;
 })()`));
 ok('Every otherwise unrepresented direction retains its nearest gunner',P('gunners.slice(0,4).concat(gunners.slice(5,8)).every(e=>allowed().includes(e))'));
 
 fresh();probe('decisions();gunners[0].fireTimer=40;frameCount++;');
-ok('Normal weapon cooldown retains the front-rank owner',P('hostileFrontlineFireAllowed(gunners[0],player)&&!hostileFrontlineFireAllowed(gunners[24],player)'));
+ok('Normal weapon cooldown retains the front-rank owner',P('hostileFrontlineFireAllowed(gunners[0],player)&&!hostileFrontlineFireAllowed(gunners[8],player)'));
 for(const [name,change]of[
   ['death','gunners[0].dead=true'],['faction','gunners[0].isFriendly=true'],
-  ['target','gunners[0].cachedTargetActor=gunners[39]'],['visibility','gunners[0].cachedCanSee=false'],
-  ['range','gunners[0].x=701'],['stun','gunners[0].stunTimer=30'],
+  ['target','gunners[0].aggroTarget=gunners[39];gunners[0].aggroTimer=100'],
+  ['range','gunners[0].x=401'],['stun','gunners[0].stunTimer=30'],
   ['reload','gunners[0].reloadTimer=90'],['burial','gunners[0].shovelLevel=8;currentLevel=2;gunners[0].shovelLevel=2;gunners[0].shovelDepth=36']
 ]){
   fresh();probe('decisions();'+change+';frameCount++;');
-  ok(name+' promotes a waiting gunner on the next frame',P('hostileFrontlineFireAllowed(gunners[24],player)'));
+  ok(name+' promotes a waiting gunner on the next frame',P('hostileFrontlineFireAllowed(gunners[8],player)'));
   ok(name+' no longer occupies a front-rank slot',P('!_hostileFrontline.allowed.has(gunners[0])'));
 }
 fresh();probe('decisions();resetRunState();');
@@ -73,28 +73,41 @@ ok('Run reset clears cached owners and identity',P('_hostileFrontline.frame===-1
 fresh();probe(`window.savedRandom=random;window.savedMathRandom=Math.random;
   random=()=>{throw Error('Coordinator consumed game RNG');};
   Math.random=()=>{throw Error('Coordinator consumed Math RNG');};`);
-try{ok('Coordinator decisions consume no RNG',P('allowed().length===24'));}
+try{ok('Coordinator decisions consume no RNG',P('allowed().length===8'));}
 finally{probe('random=savedRandom;Math.random=savedMathRandom;');}
 
 for(const [name,change]of[
   ['player','gunners[39].isPlayer=true'],['ally','gunners[39].isFriendly=true'],
-  ['neutral','gunners[39].isNeutral=true'],['bow','gunners[39].currentWeapon=WEAPONS.BOW'],
-  ['rocket','gunners[39].currentWeapon=WEAPONS.ROCKET_LAUNCHER'],
-  ['robot',"gunners[39].eType='ROBOT'"],['armored special',"gunners[39].eType='ARMORED'"],
-  ['aircraft',"gunners[39].eType='AERIAL_PISTOL'"],['molotov',"gunners[39].eType='MOLOTOV'"],
-  ['mounted','gunners[39].mounted=true'],['leg injury','gunners[39].legInjury={}']
+  ['neutral','gunners[39].isNeutral=true'],['unarmed','gunners[39].isUnarmed=true'],
+  ['occult melee',"gunners[39].eType='OCCULT_ZOMBIE'"],
+  ['dedicated boss',"gunners[39].eType='DAD'"]
 ]){
   fresh();probe(change+';');
-  ok(name+' bypasses the ordinary hostile coordinator',P('hostileFrontlineFireAllowed(gunners[39],player)'));
+  ok(name+' keeps its own combat path',P('hostileFrontlineFireAllowed(gunners[39],player)'));
 }
-fresh();ok('An actual non-player combat target bypasses the coordinator',P('hostileFrontlineFireAllowed(gunners[39],gunners[0])'));
-ok('Scripted calls without a combat target bypass the coordinator',P('hostileFrontlineFireAllowed(gunners[39],null)'));
+for(const [name,change]of[
+  ['bow','gunners[39].currentWeapon=WEAPONS.BOW'],['rocket','gunners[39].currentWeapon=WEAPONS.ROCKET_LAUNCHER'],
+  ['robot',"gunners[39].eType='ROBOT'"],['armored ranged',"gunners[39].eType='ARMORED'"],
+  ['aircraft',"gunners[39].eType='AERIAL_PISTOL'"],['molotov',"gunners[39].eType='MOLOTOV'"],
+  ['mounted','gunners[39].mounted=true'],['leg injury',"gunners[39].legInjury={phase:'PRONE_FIRE',outcome:'PRONE'}"]
+]){
+  fresh();probe(change+';gunners[39].ammo=weaponMagazineCapacity(gunners[39]);');
+  ok(name+' is subject to the shared player-target budget',P('!hostileFrontlineFireAllowed(gunners[39],player)'));
+}
+fresh();ok('An actual non-player combat target keeps unrestricted faction combat',P('hostileFrontlineFireAllowed(gunners[39],gunners[0])'));
+ok('An omitted combat target is inferred instead of bypassing the limit',P('!hostileFrontlineFireAllowed(gunners[39],null)'));
 
 fresh();
 probe(`window.waiting=gunners[39];window.beforeDenied={ammo:waiting.ammo,timer:waiting.fireTimer,
   flash:waiting.muzzleFlash,kick:waiting.weaponKick,bullets:bullets.length,particles:particles.length,shot:_huntShotSequence};
-  window.deniedResult=waiting.fire(Math.PI,null,player);`);
+  window.deniedCoverCalls=0;window.deniedAimCalls=0;
+  window.savedCoverFireAllowed=coverFireAllowed;window.savedEnemyAimHeading=enemyAimHeading;
+  coverFireAllowed=function(...args){deniedCoverCalls++;return savedCoverFireAllowed(...args);};
+  enemyAimHeading=function(...args){deniedAimCalls++;return savedEnemyAimHeading(...args);};`);
+try{probe('window.deniedResult=waiting.fire(Math.PI,null,player);');}
+finally{probe('coverFireAllowed=savedCoverFireAllowed;enemyAimHeading=savedEnemyAimHeading;');}
 ok('A denied actual shot reports false',P('deniedResult===false'));
+ok('Denied native fire rejects before barrel turning or muzzle-line queries',P('deniedCoverCalls===0&&deniedAimCalls===0'));
 ok('A denied actual shot consumes no ammunition, cooldown, recoil or effects',P(`beforeDenied.ammo===waiting.ammo&&beforeDenied.timer===waiting.fireTimer&&
   beforeDenied.flash===waiting.muzzleFlash&&beforeDenied.kick===waiting.weaponKick&&beforeDenied.bullets===bullets.length&&
   beforeDenied.particles===particles.length&&beforeDenied.shot===_huntShotSequence`));
@@ -119,7 +132,7 @@ for(const enabled of [true,false]){
     window.initialShotId=_huntShotSequence;
     for(const e of gunners)e.fire(Math.PI,null,player);`);
   const result=P('({enabled:HOSTILE_FRONTLINE.enabled,shots:_huntShotSequence-initialShotId,projectiles:bullets.length})');
-  const expected=enabled?24:100;
+  const expected=enabled?8:100;
   ok((enabled?'Enabled':'Disabled')+' 100-gunner fixture emits '+expected+' real shots',result.shots===expected);
   ok((enabled?'Enabled':'Disabled')+' 100-gunner fixture emits '+expected+' real pistol projectiles',result.projectiles===expected);
   crowdFire.push(result);

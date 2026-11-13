@@ -228,18 +228,21 @@ function updateLegInjuryTimers(a,s,dt,agePopup=true) {
 }
 function updateLegInjuryCombat(a,s,dt) {
   if(s.phase!=='PRONE'&&s.phase!=='SEATED'||s.outcome==='RECOVER')return;
-  const target=a.aggroTarget&&a.aggroTarget.hp>0&&!a.aggroTarget.dead?a.aggroTarget:player;
+  const target=hostileFrontlineTarget(a);
   if(!target||!(target.hp>0)||target.dead)return;
+  s.sightMs+=dt;
+  // Injury animation and recovery clocks continue outside this firing path.
+  // A newly admitted floor gunner must acquire fresh sight before a shot.
+  if(!hostileFrontlineFireAllowed(a,target)){s.canSee=false;s.sightTarget=null;return;}
   const dx=target.x-a.x,dy=target.y-a.y,distance=Math.hypot(dx,dy),wanted=Math.atan2(dy,dx);
   a.aimAngle+=(Math.atan2(Math.sin(wanted-a.aimAngle),Math.cos(wanted-a.aimAngle)))*Math.min(1,dt/90);
-  s.sightMs+=dt;
   if(s.sightTarget!==target||s.sightMs>=160){s.sightTarget=target;s.sightMs=0;
     s.canSee=shovelActorsVisible(a,target)&&shovelActorLOS(a,target);}
   const canSee=s.canSee&&shovelActorsVisible(a,target);
   combatAimElevation(a,target,canSee);
   if(!canSee||distance>600||a.isUnarmed||!a.currentWeapon||a.fireTimer>0||a.reloadTimer>0)return;
   if(a.ammo<=0){a.reloadTimer=90;return;}
-  a.fire(a.aimAngle);
+  a.fire(a.aimAngle,null,target);
 }
 function updateLegInjuryActor(a,elapsedMs=deltaTime) {
   if(!a)return false;
@@ -25054,53 +25057,129 @@ function updateEnemyShotReaction(a,target,canSee,distance,elapsedMs=deltaTime) {
 // place to approach is AI work; wall contact never becomes a movement lock.
 const ENEMY_COVER_WEAPONS=new Set([WEAPONS.PISTOL,WEAPONS.SMG,WEAPONS.DUAL_SMG,WEAPONS.ASSAULT_RIFLE,
   WEAPONS.SHOTGUN,WEAPONS.REVOLVER,WEAPONS.COACH_GUN]),_enemyCoverCars=[];
-// Large crowds share a front rank against the player. Keep owners through
-// their ordinary weapon cooldowns; handing a slot to every ready rear gunner
-// would merely spread the same volume of fire across adjacent frames.
-const HOSTILE_FRONTLINE={enabled:true,crowdThreshold:32,shooters:24};
-const _hostileFrontline={frame:-1,player:null,level:-1,limited:false,
-  candidates:[],allowed:new Set()};
+// Admit a small firing team before aiming/raycast work. Awareness and movement
+// still run for reserves; weapon cooldowns never create extra firing places.
+const HOSTILE_FRONTLINE={enabled:true,shooters:8,refreshMs:100,leaseMs:1800,retryMs:300};
+const HOSTILE_RANGED_TYPES=new Set(['ROBOT','ARMORED','AERIAL','AERIAL_PISTOL','SAUCER','SAUCER_RED',
+  'MOLOTOV','SNAIL','SNAIL_HYBRID','ALIEN_GATOR']);
+const _hostileFrontline={frame:-1,player:null,level:-1,limited:false,clock:0,nextSelect:0,
+  candidates:[],eligible:new Set(),allowed:new Set(),records:new WeakMap()};
 function hostileFrontlineEligible(a) {
-  return !!a&&!a.isPlayer&&!a.isFriendly&&!a.isNeutral&&!a.dead&&a.hp>0&&a.state==='CHASE'&&
-    !a.isUnarmed&&!a.isNM0Scientist&&!a.mounted&&!a.legInjury&&!a.knockedOut&&!(a.stunTimer>0)&&
-    !(a.reloadTimer>0)&&a.ammo>0&&a.eType!=='MOLOTOV'&&actorCanUseStances(a)&&
-    ENEMY_COVER_WEAPONS.has(a.currentWeapon)&&shovelPlayerDepth(a)<SHOVEL.underground;
+  if(!a||a.isPlayer||a.isFriendly||a.isNeutral||a.dead||!(a.hp>0)||a.state!=='CHASE'||
+      a.isNM0Scientist||a.knockedOut||a.stunTimer>0||a.reloadTimer>0||
+      a.eType==='DAD'||a.eType==='SIA'||isOccultActor(a)||shovelPlayerDepth(a)>=SHOVEL.underground)return false;
+  if(a.enraged&&(a.eType==='ROBOT'||a.eType==='SNAIL_HYBRID'))return false;
+  return HOSTILE_RANGED_TYPES.has(a.eType)||
+    !a.isUnarmed&&actorCanUseStances(a)&&!!a.currentWeapon&&a.ammo>0;
+}
+function hostileFrontlineTarget(a) {
+  let target=a&&a.aggroTarget&&a.aggroTarget.hp>0&&!a.aggroTarget.dead?a.aggroTarget:
+    a&&a.leader&&a.leader.hp>0&&!a.leader.dead?a.leader:player;
+  if(a&&gateAmbushIsolated()&&a.isAmbush&&target!==player&&
+      (!gateBattleActor(target)||(target.x-a.x)**2+(target.y-a.y)**2>700*700))target=player;
+  return target;
+}
+function hostileFrontlineCommitted(a) {
+  return a.chargeTimer>0||a.orbChargeTimer>0||a.burstLeft>0||
+    (a.eType==='SAUCER_RED'||a.eType==='SNAIL_HYBRID')&&a.burstsFired>0&&!(a.burstCooldown>0)&&
+      a.cachedCanSee&&player&&hostileFrontlineDistance(a)<600*600;
+}
+function hostileFrontlineRange(a) {
+  if(a.legInjury)return 600;
+  if(a.eType==='ROBOT')return 620;
+  if(a.eType==='SNAIL')return 250;
+  if(a.eType==='SAUCER_RED'||a.eType==='SNAIL_HYBRID')return 600;
+  if(a.eType==='AERIAL'||a.eType==='SAUCER'||a.eType==='MOLOTOV')return 500;
+  return isHardMode||a.cover&&a.cover.active||a._enemyCover&&a._enemyCover.goal?700:400;
 }
 function resetHostileFrontline() {
   const s=_hostileFrontline;s.frame=-1;s.player=null;s.level=-1;s.limited=false;
-  s.candidates.length=0;s.allowed.clear();
+  s.clock=0;s.nextSelect=0;s.candidates.length=0;s.eligible.clear();s.allowed.clear();s.records=new WeakMap();
 }
 function hostileFrontlineDistance(a) {
   const dx=a.x-player.x,dy=a.y-player.y;return dx*dx+dy*dy;
 }
 function hostileFrontlineFireAllowed(a,target) {
-  if(!HOSTILE_FRONTLINE.enabled||target!==player||!hostileFrontlineEligible(a)||
-      !doTick||!combatStanceContext())return true;
+  if(!HOSTILE_FRONTLINE.enabled||!hostileFrontlineEligible(a)||
+      (target||hostileFrontlineTarget(a))!==player)return true;
+  if(!doTick||!combatStanceContext())return false;
   const s=_hostileFrontline;
-  if(s.frame!==frameCount||s.player!==player||s.level!==currentLevel) {
+  if(s.player!==player||s.level!==currentLevel)resetHostileFrontline();
+  if(s.frame!==frameCount) {
     s.frame=frameCount;s.player=player;s.level=currentLevel;
-    s.candidates.length=0;s.allowed.clear();s.limited=false;
+    s.clock+=Math.min(100,Math.max(0,Number(deltaTime)||0));
+    // Only the small current team needs per-frame validation. Rebuild the
+    // whole candidate roster on its shared cadence or an owner's invalidation.
+    let invalid=false;
+    for(const e of s.allowed){
+      const committed=hostileFrontlineCommitted(e),range=Math.max(hostileFrontlineRange(e),committed?700:0);
+      const perception=stealthPerceptionContext()&&!e.isAmbush&&e.stealthPerception;
+      const known=perception&&perception.target===player||e.cachedTargetActor===player;
+      const visible=perception&&perception.target===player?perception.visible:e.cachedCanSee;
+      if(!hostileFrontlineEligible(e)||hostileFrontlineTarget(e)!==player||hostileFrontlineDistance(e)>=range*range||
+          known&&!visible&&!hostileFrontlineCommitted(e)&&!(e.cover&&e.cover.active||e._enemyCover&&e._enemyCover.goal)){
+        s.allowed.delete(e);invalid=true;
+        const record=s.records.get(e);if(record&&known&&!visible)record.retryAt=s.clock+HOSTILE_FRONTLINE.retryMs;
+      }
+    }
+    if(!invalid&&s.clock<s.nextSelect&&s.allowed.size<=HOSTILE_FRONTLINE.shooters)
+      return s.allowed.has(a)&&hostileFrontlineTarget(a)===player;
+    s.candidates.length=0;s.eligible.clear();
+    const stealth=stealthPerceptionContext();let changed=false;
     for(let i=0;i<enemiesList.length;i++) {
       const e=enemiesList[i];
-      if(hostileFrontlineEligible(e)&&e.cachedTargetActor===player&&e.cachedCanSee&&
-          hostileFrontlineDistance(e)<700*700)s.candidates.push(e);
-    }
-    if(s.candidates.length>HOSTILE_FRONTLINE.crowdThreshold) {
-      s.limited=true;
-      s.candidates.sort((a,b)=>hostileFrontlineDistance(a)-hostileFrontlineDistance(b));
-      // Keep pressure from every occupied direction, then fill the remaining
-      // places with the nearest rank. A one-sided rush can still use 24 guns.
-      let directions=0;
-      for(let i=0;i<s.candidates.length&&s.allowed.size<HOSTILE_FRONTLINE.shooters;i++) {
-        const e=s.candidates[i],angle=Math.atan2(e.y-player.y,e.x-player.x);
-        const bit=1<<Math.min(7,Math.floor((angle+Math.PI)*4/Math.PI));
-        if(!(directions&bit)){directions|=bit;s.allowed.add(e);}
+      if(!hostileFrontlineEligible(e)||hostileFrontlineTarget(e)!==player)continue;
+      const distance=hostileFrontlineDistance(e),range=Math.max(hostileFrontlineRange(e),
+        s.allowed.has(e)&&hostileFrontlineCommitted(e)?700:0);
+      if(distance>=range*range)continue;
+      let record=s.records.get(e);
+      if(!record){record={grantedAt:-Infinity,retryAt:0};s.records.set(e,record);}
+      const perception=stealth&&!e.isAmbush&&e.stealthPerception&&e.stealthPerception.target===player?e.stealthPerception:null;
+      const known=!!perception||e.cachedTargetActor===player;
+      const visible=perception?perception.visible:e.cachedCanSee;
+      const sheltered=e.cover&&e.cover.active||e._enemyCover&&e._enemyCover.goal;
+      if(s.allowed.has(e)&&known&&!visible&&!sheltered&&!hostileFrontlineCommitted(e)){
+        s.allowed.delete(e);record.retryAt=s.clock+HOSTILE_FRONTLINE.retryMs;changed=true;
       }
-      for(let i=0;i<s.candidates.length&&s.allowed.size<HOSTILE_FRONTLINE.shooters;i++)
-        s.allowed.add(s.candidates[i]);
+      if(record.retryAt>s.clock&&!visible)continue;
+      record.distance=distance;record.sight=visible?0:known?2:1;
+      s.candidates.push(e);s.eligible.add(e);
+    }
+    const cap=Math.max(1,Math.floor(HOSTILE_FRONTLINE.shooters));
+    s.limited=s.candidates.length>cap;
+    for(const e of s.allowed)if(!s.eligible.has(e)){s.allowed.delete(e);changed=true;}
+    if(s.clock>=s.nextSelect||changed||s.allowed.size<Math.min(cap,s.candidates.length)){
+      s.nextSelect=s.clock+HOSTILE_FRONTLINE.refreshMs;
+      const waiting=s.candidates.length>s.allowed.size;
+      for(const e of s.allowed)if(s.allowed.size>cap||waiting&&
+          s.clock-s.records.get(e).grantedAt>=HOSTILE_FRONTLINE.leaseMs&&!hostileFrontlineCommitted(e))s.allowed.delete(e);
+      s.candidates.sort((a,b)=>{
+        const u=s.records.get(a),v=s.records.get(b);
+        return u.sight-v.sight||(u.grantedAt===v.grantedAt?0:u.grantedAt<v.grantedAt?-1:1)||u.distance-v.distance;
+      });
+      // Prefer useful, visible firing lanes, then share waiting turns. Fill
+      // distinct directions within that same visibility class first.
+      let directions=0;
+      for(const e of s.allowed)directions|=1<<Math.min(7,Math.floor((Math.atan2(e.y-player.y,e.x-player.x)+Math.PI)*4/Math.PI));
+      const grant=e=>{if(!s.allowed.has(e)){s.allowed.add(e);const r=s.records.get(e);
+        r.needsSight=s.limited||!!r.waited;r.waited=false;r.grantedAt=s.clock;r.grantedFrame=frameCount;}};
+      const bestSight=s.candidates.length?s.records.get(s.candidates[0]).sight:0;
+      for(let i=0;i<s.candidates.length&&s.allowed.size<cap;i++) {
+        const e=s.candidates[i],angle=Math.atan2(e.y-player.y,e.x-player.x);
+        if(s.records.get(e).sight!==bestSight)break;
+        const bit=1<<Math.min(7,Math.floor((angle+Math.PI)*4/Math.PI));
+        if(!(directions&bit)){directions|=bit;grant(e);}
+      }
+      for(let i=0;i<s.candidates.length&&s.allowed.size<cap;i++)grant(s.candidates[i]);
+      for(const e of s.candidates)if(!s.allowed.has(e))s.records.get(e).waited=true;
     }
   }
-  return !s.limited||s.allowed.has(a);
+  // A stale same-frame snapshot can only deny a slot, never manufacture one.
+  return s.allowed.has(a)&&hostileFrontlineTarget(a)===player;
+}
+function hostileFrontlineNeedsSight(a) {
+  const record=_hostileFrontline.records.get(a);
+  return !!record&&record.needsSight&&record.grantedFrame===frameCount;
 }
 function enemyCoverEligible(a) {
   return !!a&&!a.legInjury&&!a.isPlayer&&!a.isNeutral&&!a.isUnarmed&&!a.isCoward&&!a.mounted&&
@@ -25159,7 +25238,7 @@ function enemyCoverGoal(a,threatX,threatY,state) {
   }
   return null;
 }
-function updateEnemyCoverAI(a,target,canSee,distance,elapsedMs=deltaTime) {
+function updateEnemyCoverAI(a,target,canSee,distance,elapsedMs=deltaTime,allowAcquire=true) {
   if(isPaused||!doTick)return false;
   if(typeof updateActorCover!=='function'||typeof coverSolidKind!=='function'||
       !enemyCoverEligible(a)||!target||target.dead||target.hp<=0||
@@ -25180,7 +25259,7 @@ function updateEnemyCoverAI(a,target,canSee,distance,elapsedMs=deltaTime) {
   state.searchMs=Math.max(0,state.searchMs-dt);
   if(state.goal&&(!coverSolidKind(state.goal.solid)||
       Math.hypot(state.goal.x-a.x,state.goal.y-a.y)>300))state.goal=null;
-  if(!state.goal&&!a.cover?.active&&state.searchMs===0) {
+  if(allowAcquire&&!state.goal&&!a.cover?.active&&state.searchMs===0) {
     state.searchMs=400+(Math.abs(a.aiOffset||0)%10)*19;
     state.goal=enemyCoverGoal(a,state.lastX,state.lastY,state);
     state.approachMs=0;
@@ -25207,11 +25286,12 @@ function updateEnemyCoverAI(a,target,canSee,distance,elapsedMs=deltaTime) {
     return true;
   }
   state.cycleMs+=dt;
-  const aiming=state.cycleMs%1500<560&&a.reloadTimer<=0&&!enemyShotReactionHoldsLow(a);
+  const admitted=hostileFrontlineFireAllowed(a,target);
+  const aiming=admitted&&state.cycleMs%1500<560&&a.reloadTimer<=0&&!enemyShotReactionHoldsLow(a);
   a.isMoving=false;a.gait+=(0-a.gait)*GAIT_EASE;a._coverApproach=false;
   updateActorCover(a,dt,0,0,aiming);
   if(!a.cover?.active){state.goal=null;return false;}
-  if(aiming&&canSee&&a.fireTimer<=0&&a.reloadTimer<=0&&a.ammo>0&&hostileFrontlineFireAllowed(a,target)) {
+  if(aiming&&canSee&&a.fireTimer<=0&&a.reloadTimer<=0&&a.ammo>0) {
     const upper=coverUpperOffset(a);
     const zone=combatAimElevation(a,target,true);
     const range=legShotRangeForWeapon(zone,a.currentWeapon,a);
@@ -27037,7 +27117,10 @@ if (this.eType === "COW") {
  this.ammo = weaponMagazineCapacity(this);
     if (this.biteCooldown > 0) this.biteCooldown--;
     if (this.ignoreBldgTimer > 0) this.ignoreBldgTimer--; 
-    if(this.orbChargeTimer>0&&!shovelActorsVisible(this,this.aggroTarget||this.leader||player))this.orbChargeTimer=0;
+    if(this.orbChargeTimer>0){
+      const orbTarget=hostileFrontlineTarget(this);
+      if(!hostileFrontlineFireAllowed(this,orbTarget)||!shovelActorsVisible(this,orbTarget))this.orbChargeTimer=0;
+    }
     if (this.orbChargeTimer > 0) { this.orbChargeTimer--; if (this.orbChargeTimer === 1) { spawnOrb(this.x + cos(this.aimAngle) * 50, this.y + sin(this.aimAngle) * 50); this.fireTimer = 100; } }
 
     // A man on a horse covers ground. This is the whole of what being mounted
@@ -27254,6 +27337,7 @@ if (this.eType === "COW") {
     // Reject distant/out-of-cone human candidates before tunnel or solid
     // geometry. Surface layer compatibility still lets scripted reinforcements
     // pursue their ordered target beyond firearm range without granting sight.
+    const shootingAllowed=hostileFrontlineFireAllowed(this,trg);
     const sightCandidate=mesa?stealthVisionCandidate(this,trg,mesa.phase==='ALERT'):guardNativeVisionCandidate(this,trg);
     const layerVisible=mesa?!!(mesa.layerVisible||mesa.visible):sightCandidate?shovelActorsVisible(this,trg):
       shovelPlayerDepth(this)<SHOVEL.underground&&shovelPlayerDepth(trg)<SHOVEL.underground;
@@ -27262,7 +27346,7 @@ if (this.eType === "COW") {
     this.cachedVisionCandidate=sightCandidate;
     if(!layerVisible||!sightCandidate){this.cachedCanSee=false;this.chargeTimer=0;this.burstLeft=0;this.orbChargeTimer=0;}
     // SKIP FRAME UPDATES: Only calculate expensive AI logic once every 10 frames
-    if (!mesa && (frameCount % 10 === this.aiOffset || sightChanged)) {
+    if (!mesa && (frameCount % 10 === this.aiOffset || sightChanged||shootingAllowed&&hostileFrontlineNeedsSight(this))) {
         
         // Decrement the timer here so it accurately counts down
         if (this.aggroTarget) {
@@ -27299,7 +27383,7 @@ if (this.eType === "COW") {
     let canSee = this.cachedCanSee;
     let iA = this.cachedTargetAngle; 
     let inFOV = true;
-    combatAimElevation(this, trg, canSee);
+    if(shootingAllowed||frameCount%10===this.aiOffset)combatAimElevation(this, trg, canSee);
     updateCombatStanceAI(this, trg, canSee, dToP);
     if(enemyCoverDiveActive(this))return;
 
@@ -27359,6 +27443,13 @@ if (this.eType === "COW") {
 
         if (this.fireCooldownR > 0) this.fireCooldownR--;
         if (this.burstGap > 0) this.burstGap--;
+        const robotCanFire=hostileFrontlineFireAllowed(this,trg);
+        // Waiting robots keep moving; an interrupted telegraph cannot release
+        // its deferred beams after it has lost its firing place.
+        if(!robotCanFire){
+          if(this.chargeTimer>0||this.burstLeft>0)this.fireCooldownR=Math.max(this.fireCooldownR,20);
+          this.chargeTimer=0;this.burstLeft=0;this.burstGap=0;
+        }
 
         // Loosing the two shots the charge bought.
         if (this.burstLeft > 0) {
@@ -27392,7 +27483,7 @@ if (this.eType === "COW") {
         }
 
         this.aimAngle = aR;
-        if (canSee && dR < 620 && this.fireCooldownR <= 0) {
+        if (robotCanFire && canSee && dR < 620 && this.fireCooldownR <= 0) {
             this.chargeTimer = ROBOT_CHARGE;
             this.isMoving = false;
             return;
@@ -27512,7 +27603,7 @@ if (this.eType === "COW") {
             } else {
                 if (canSee && dToP < 600) {
                     if (this.burstCooldown > 0) { this.burstCooldown--; } 
-                    else if (this.fireTimer <= 0) {
+                    else if (this.fireTimer <= 0 && hostileFrontlineFireAllowed(this,trg)) {
                         const beamAim=enemyAimHeading(this,this.aimAngle,typeof deltaTime==='number'?deltaTime:1000/60);this.aimAngle=beamAim;
                         let tX_R = this.x + cos(this.aimAngle) * 70 - sin(this.aimAngle) * 10, tY_R = this.y + sin(this.aimAngle) * 70 + cos(this.aimAngle) * 10;
                         let tX_L = this.x + cos(this.aimAngle) * 70 - sin(this.aimAngle) * -10, tY_L = this.y + sin(this.aimAngle) * 70 + cos(this.aimAngle) * -10;
@@ -27535,7 +27626,7 @@ if (this.eType === "COW") {
             if (this.eType === "SNAIL") {
                 // Snail Logic remains unchanged
                 if (this.isMoving && frameCount % 30 === 0) sludges.push(new SludgeZone(this.x, this.y, 20, 90)); 
-                if (dToP < 250 && this.fireTimer <= 0 && canSee) { grenades.push(new AcidSpit(this.x, this.y, trg.x, trg.y)); sfx.throwG(); this.fireTimer = 180; }
+                if (dToP < 250 && this.fireTimer <= 0 && canSee && hostileFrontlineFireAllowed(this,trg)) { grenades.push(new AcidSpit(this.x, this.y, trg.x, trg.y)); sfx.throwG(); this.fireTimer = 180; }
                 if (distToTarget > 210 || (!canSee && distToTarget > 20)) { let vx = cos(iA) * 6.0 * spd, vy = sin(iA) * 6.0 * spd; let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y; }
             } else if (this.eType === "BUG") {
                 let hitFence = false;
@@ -27585,11 +27676,11 @@ if (this.eType === "COW") {
 
         else if (this.eType === "SAUCER" || this.eType === "SAUCER_RED" || this.eType === "AERIAL") {
            if (this.eType === "SAUCER" || this.eType === "AERIAL") {
-               if (canSee && dToP < 500 && this.fireTimer <= 0) { grenades.push(new Grenade(this.x, this.y, trg.x, trg.y, this.eType==="SAUCER")); sfx.throwG(); this.fireTimer = 160; }
+               if (canSee && dToP < 500 && this.fireTimer <= 0 && hostileFrontlineFireAllowed(this,trg)) { grenades.push(new Grenade(this.x, this.y, trg.x, trg.y, this.eType==="SAUCER")); sfx.throwG(); this.fireTimer = 160; }
                if (distToTarget > 250 || (!canSee && distToTarget > 20)) { let vx = cos(iA) * 2.45 * spd, vy = sin(iA) * 2.45 * spd; this.x += vx; this.y += vy; aDx = vx; aDy = vy; }
            } else if (this.eType === "SAUCER_RED") {
                if (canSee && dToP < 600) {
-                   if (this.burstCooldown > 0) { this.burstCooldown--; } else if (this.fireTimer <= 0) { this.fire(iA); this.burstsFired++; if (this.burstsFired >= 3) { this.burstCooldown = 156; this.burstsFired = 0; } else { this.fireTimer = 30; } }
+                   if (this.burstCooldown > 0) { this.burstCooldown--; } else if (this.fireTimer <= 0 && hostileFrontlineFireAllowed(this,trg)) { this.fire(iA,null,trg); this.burstsFired++; if (this.burstsFired >= 3) { this.burstCooldown = 156; this.burstsFired = 0; } else { this.fireTimer = 30; } }
                }
                if (canSee || distToTarget > 20) {
                    if (!canSee) {
@@ -27604,11 +27695,11 @@ if (this.eType === "COW") {
            }
         }
         else if (this.eType === "MOLOTOV") { 
-            if (canSee && dToP < 500 && this.fireTimer <= 0) { grenades.push(new Molotov(this.x, this.y, trg.x, trg.y)); sfx.throwG(); this.fireTimer = 180; } 
+            if (canSee && dToP < 500 && this.fireTimer <= 0 && hostileFrontlineFireAllowed(this,trg)) { grenades.push(new Molotov(this.x, this.y, trg.x, trg.y)); sfx.throwG(); this.fireTimer = 180; }
             if (distToTarget > 300 || (!canSee && distToTarget > 20)) { let vx = cos(iA) * 2.45 * spd, vy = sin(iA) * 2.45 * spd; let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y; } 
         }
         else {
-            if(updateEnemyCoverAI(this,trg,canSee,distToTarget,deltaTime))return;
+            if(updateEnemyCoverAI(this,trg,canSee,distToTarget,deltaTime,shootingAllowed))return;
             if (typeof isHardMode !== 'undefined' && isHardMode) {
                 if (this.standStillTimer === undefined) { this.standStillTimer = 0; this.strafeTimer = 0; this.strafeDir = 1; }
                 let mAng = iA;
@@ -27701,6 +27792,8 @@ if (this.eType === "COW") {
 
 
         fire(sA, bowShot = null, combatTarget = null) {
+    // Reserves stop before facing, anatomy, muzzle rays, RNG or shot effects.
+    if(!hostileFrontlineFireAllowed(this,combatTarget))return false;
     if(enemyCoverDiveActive(this))return false;
     const stanceAimBefore = this.aimAngle;
     constrainStanceFacing(this);
@@ -27732,7 +27825,6 @@ if (this.eType === "COW") {
     // Tactical AI may wait for a clear shot. Player rounds hit any intervening
     // wall normally, including one crossed by a close-range weapon muzzle.
     if(!this.isPlayer&&!coverFireAllowed(this,sA,bowShot))return false;
-    if(!hostileFrontlineFireAllowed(this,combatTarget))return false;
     frontierAmbientMarkCombat();
     const huntShotId = ++_huntShotSequence;
     let aH = this.isPlayer ? playerAimTarget() : this.stanceAimZone || (this.isFriendly && headAimToggle ? "HEAD" : "BODY"), cd = (this.isPlayer || this.isFriendly) ? this.currentWeapon.fireCooldown : (this.currentWeapon.enemyCooldown || 48), bob = this.isMoving&&!stanceCoverPoseActive(this) ? abs(sin(this.walkCycle)) * 2 : 0;
@@ -61683,7 +61775,7 @@ function stealthUpdateEnemy(e,spd=1){
   // also gets a fresh native ray before a ready gun can use cached visibility.
   if(s.visible){
     if(!layerNow)s.visible=false;
-    else if(e.fireTimer<=0){
+    else if(e.fireTimer<=0&&hostileFrontlineFireAllowed(e,target)){
       if(freshVisible===null)freshVisible=stealthPerceptionVisible(e,target,s.phase==='ALERT',layerNow);
       if(!freshVisible)s.visible=false;
     }else if(freshVisible!==true&&stealthHiddenByLowCover(e,target))s.visible=false;
