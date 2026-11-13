@@ -1,8 +1,10 @@
 # Blender player models
 
-The player is an articulated 3D mesh rendered through WebGL2 at the game's
-existing Canvas actor and corpse slots. The overhead camera, world ordering,
-controls, simulation, saves, and OpenProcessing entry point remain in place.
+The player and ordinary hostile human enemies use an articulated 3D mesh
+rendered through WebGL2 at the game's existing Canvas actor slots. Player
+corpses use the same model; enemy corpses keep their native painter. The
+overhead camera, world ordering, controls, simulation, saves, and
+OpenProcessing entry point remain in place.
 `Player3D.enabled = false` selects the complete native player painter for
 comparison. Unsupported or lost WebGL contexts use that same fallback.
 
@@ -86,6 +88,39 @@ floor stamp. Enemy bodies retain their existing retirement behavior.
 `Player3D.getDiagnostics()` reports context readiness, failure details, successful
 draws, mesh uploads, GPU resource creation, and context restoration counts.
 
+## Living human enemies
+
+Ordinary hostile humans share the mesh library, depth-tested support grip,
+round head, clothing proportions, and live lighting. Their existing aim,
+independent hips, gait clock, NPC arm targets, reload poses, and gameplay muzzle
+origins remain authoritative. Their simulation `isArmed` flag stays unchanged;
+the private pose shadow accounts for NPCs presenting a weapon while that flag
+is false. Player inputs, inventory tools, lasers, and suit choices do not apply
+to ordinary enemies.
+
+The scope is normal and female pistol enemies, male/female NM-0 rookies,
+Molotov carriers, standard armored soldiers, grey fatigues, hostile military
+soldiers, city guards, and bandits. Their palettes, helmets, armor damage
+threshold, and bandit clothing follow their own identity. Female hair and
+ponytails retain their authored Canvas detail at the resolved mesh head;
+Molotov carriers hold a green bottle with its wick instead of a firearm.
+
+`enemy3DLivingEligible` rejects corpses, injured and prone actors (including
+their drop/get-up transition), stunned/knocked-out actors, boxing/melee states,
+mounted actors, neutral/friendly people, civilians, and specialist/nonhuman
+units. Enemy crouching and ordinary cover can use the mesh. The normal
+renderer fallback remains available. No enemy death, injury, AI, projectile,
+or hit-detection logic is replaced.
+
+See the [enemy pose comparison](previews/enemy3d-poses.png),
+[animation comparison](previews/enemy3d-motion.mp4), and
+[in-game scene](previews/enemy3d-in-game.png). Results are stored in
+`enemy3d-validation.json`. The GPU check renders 24 enemies using shared,
+persistent mesh buffers, then exercises a real fight scene. Separate rendering
+and compositing per actor adds cost; SwiftShader timings on this host are noisy
+and do not establish phone frame rates. Physical-device crowd performance has
+not been measured.
+
 ## Verification
 
 ```sh
@@ -100,6 +135,9 @@ node tools/check-player3d-support-hand.js
 node tools/check-player3d-jetpack.js
 node tools/check-player3d-equipment-browser.cjs
 node tools/check-player3d-browser.cjs
+node tools/check-enemy3d-pose.js
+node tools/check-enemy3d-dispatch.js
+node tools/check-enemy3d-browser.cjs
 node tools/visual-player3d-fidelity.cjs
 ```
 

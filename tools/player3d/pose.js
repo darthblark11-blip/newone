@@ -104,6 +104,12 @@ function player3DPose(actor, options = {}) {
   // receives those caches, so merely looking at a mesh cannot advance/mutate
   // a simulation actor or its frozen corpse identity.
   const c=Object.assign(Object.create(Object.getPrototypeOf(actor)||null),actor);
+  // NPCs present their firearm even though their simulation isArmed flag is
+  // normally false. Retain that flag for the native head/torso animation;
+  // only the private pose shadow receives the effective held-weapon state.
+  const nativeArmed=!!c.isArmed;
+  if(!c.isPlayer&&!c.isUnarmed)c.isArmed=true;
+  if(!c.isPlayer&&c._coverBowMuzzles)c._coverBowMuzzles=c._coverBowMuzzles.map(m=>m.slice());
   for(const key of ['_standingPresentationPose','_stanceBody','_stanceMount','_stancePresentationMount','_injuryMount','_legHitGeometry'])c[key]=null;
   const safe=(fn,fallback)=>{try{const value=fn();return value==null?fallback:value;}catch(_){return fallback;}};
   const bw=Number(c.bodyW||c.bW)||21,bh=Number(c.bodyH||c.bH)||27;
@@ -114,6 +120,7 @@ function player3DPose(actor, options = {}) {
   const identity=options.identity||safe(()=>figureIdentity(c),c)||c;
   const palette={skin:M.color(identity.skinCol||c.skinCol,[235,180,140]),shirt:M.color(identity.shirtCol||c.shirtCol,[200,30,30]),
     pants:M.color(identity.pantsCol||c.pantsCol,[30,80,180]),steel:[59,68,79],wood:[128,77,37],gold:[172,136,61]};
+  if(!c.isPlayer&&c.eType==='BANDIT'&&!identity.skinCol&&!c.skinCol)palette.skin=[214,168,132];
   const armored=!!identity.explosiveArmor,chemist=!armored&&!!identity.chemistSuit,ninja=!armored&&!chemist&&!!identity.ninjaSuit,cowboy=!armored&&!chemist&&!ninja&&!!identity.cowboySuit;
   if(armored){palette.shirt=[60,100,40];palette.pants=[139,115,85];}
   else if(chemist){palette.shirt=[238,242,239];palette.pants=[20,22,25];}
@@ -126,12 +133,13 @@ function player3DPose(actor, options = {}) {
   const cover=safe(()=>stanceCoverPoseActive(c),false);
   const stance=(floor>0||crouch>0||cover||c.legInjury)?safe(()=>stanceBodyPose(c),null):null;
   const frame=typeof frameCount==='number'?frameCount:0,cycle=Number(c.walkCycle)||0;
-  const motion=c.mounted?clamp(c.gait||0):safe(()=>standingLowerEligible(c)?standingMotionAmount(c):Number(!!c.isMoving),Number(!!c.isMoving));
+  const motion=!c.isPlayer?safe(()=>entityMotionAmount(c),Number(!!c.isMoving)):
+    c.mounted?clamp(c.gait||0):safe(()=>standingLowerEligible(c)?standingMotionAmount(c):Number(!!c.isMoving),Number(!!c.isMoving));
   // gaitPose() returns one shared scratch object. Native helper calls below
   // may sample idle gait while the standing motion envelope is still easing.
   // Retain this actor's actual gait before those helpers reuse the scratch.
   const gait={...safe(()=>gaitPose(c.gait||0),{swing:motion,lean:0,twist:0,bob:1,bend:0,band:1})};
-  const tool=options.weapon===false||c.isArmed?'NONE':safe(()=>meleeTool(),'NONE');
+  const tool=options.weapon===false||!c.isPlayer||c.isArmed?'NONE':safe(()=>meleeTool(),'NONE');
   const action=safe(()=>leftHandAction(c),0);
   const rotatePoint=(x,y,z,a=angle)=>rotate(point(x,y,z),a);
   const nativeWorld=p=>point(p.x-c.x,p.y-c.y,Number(p.z)||0);
@@ -155,7 +163,7 @@ function player3DPose(actor, options = {}) {
       const size=stance?Number(stance.size)||1:1;
       const lower=!stance?safe(()=>standingLowerPose(c),null):null;
       const presentation=!stance?safe(()=>standingPresentationPose(c),null):null;
-      const aiming=!!c.isArmed&&c.meleeTimer<=0&&safe(()=>playerAiming(c),false);
+      const aiming=(c.isPlayer?!!c.isArmed:nativeArmed)&&c.meleeTimer<=0&&safe(()=>playerAiming(c),false);
       const twist=stance?stance.yaw||0:presentation?presentation.tw||0:
         c.isMoving&&!aiming?Math.sin(cycle)*gait.twist*motion:0;
       const torsoHeading=heading+twist,hipHeading=stance?heading+(stance.hipYaw||0):lower?lower.angle:safe(()=>entityMoveHeading(c),Number(c.moveAngle)||angle);
@@ -164,7 +172,7 @@ function player3DPose(actor, options = {}) {
       if(c.mounted)bob*=.4;
       if(c.reloadTimer>0&&!safe(()=>oneHandWeapon(c.currentWeapon),true))bob+=Math.sin(frame*.5)*3;
       const local=(x,y,z,a=heading)=>{const q=rotatePoint(x*size,y*size,z,a);q.y-=dive;return q;};
-      const braced=c.isArmed&&c.reloadTimer<=0&&c.meleeTimer<=0&&!c.dead&&
+      const braced=(c.isPlayer?c.isArmed:nativeArmed)&&c.reloadTimer<=0&&c.meleeTimer<=0&&!c.dead&&
         safe(()=>solidLongGun(c.currentWeapon)||c.currentWeapon===WEAPONS.ROCKET_LAUNCHER,false);
       const presented=presentation?presentation.t:1;
       p={head:stance?local(stance.head.x,stance.head.y,headHeight+air):rotatePoint(bob+(braced?3*presented:0),braced?4*presented:0,headHeight+air,torsoHeading),
@@ -247,6 +255,25 @@ function player3DPose(actor, options = {}) {
             disc(h,0,sy,(PU+PF)*.98);hx=h.x;hy=h.y;
             const e={x:(hx+1.5)*.42-gait.bend*1.6,y:side*(SH+.6+gait.bend*1.5)};
             for(let i=0;i<2;i++){disc(e,0,sy,PU);disc(e,hx,hy,PF);}disc(e,0,sy,PU);ex=e.x;ey=e.y;
+          } else if(!c.isPlayer) {
+            // The native NPC rig has its own shoulder anchors and midpoint
+            // elbows; player two-hand and sprint sleeves do not apply to it.
+            const long=safe(()=>solidLongGun(c.currentWeapon)?aimedLongGunPose(c,twist,bob):null,null);
+            if(side<0) {
+              sx=-5*(c.armDrag||0);sy=-14+3*(c.armDrag||0);hx=8-20*(c.armDrag||0);hy=sy;
+              if(safe(()=>c.currentWeapon===WEAPONS.BOW,false)){hx=sx+Math.cos(.5)*25;hy=sy+Math.sin(.5)*25;}
+              else if(long){hx=long.fore[0];hy=long.fore[1];}
+              else if(safe(()=>weaponHands(c.currentWeapon)===2,false)){hx=sx+Math.cos(.52)*32;hy=sy+Math.sin(.52)*32;}
+              else if(safe(()=>c.currentWeapon===WEAPONS.DUAL_SMG,false))hx=25;
+              ex=(sx+hx)*.5-2;ey=(sy+hy)*.5-1;
+            } else {
+              const pistol=safe(()=>c.currentWeapon===WEAPONS.PISTOL,false);
+              let sleeve=5;hy=pistol?8:11;hx=pistol?16:15;sy=hy;
+              if(safe(()=>c.currentWeapon===WEAPONS.SMG||c.currentWeapon===WEAPONS.DUAL_SMG,false)){hx=22;sleeve=12;}
+              else if(safe(()=>solidLongGun(c.currentWeapon)||c.currentWeapon===WEAPONS.ROCKET_LAUNCHER,false)){hx=8;sleeve=-1;}
+              if(long){hx=long.rear[0];hy=long.rear[1];}
+              sx=sleeve-9;ex=sleeve+3;ey=(sy+hy)*.5+1;
+            }
           } else {
             const two=safe(()=>weaponHands(c.currentWeapon)===2,false),long=two?safe(()=>aimedLongGunPose(c,twist,bob),null):null;
             if(two) {
@@ -293,7 +320,7 @@ function player3DPose(actor, options = {}) {
           a.fist=map(hx,hy,gunHeight*.82+air);
           a.elbow=map(sx+(hx-sx)*.40-2.5,sy+(hy-sy)*.40+(right?2.5:-2.5),gunHeight*.72+air);
         };
-        if(one) {
+        if(one&&(c.isPlayer||stance)) {
           const pistol=safe(()=>c.currentWeapon===WEAPONS.PISTOL,false),dual=safe(()=>c.currentWeapon===WEAPONS.DUAL_SMG,false);
           const gx=(pistol?16:22)-3*arc,gy=pistol?8:11;
           reload(1,0,bh*.425,gx,gy);
@@ -307,7 +334,7 @@ function player3DPose(actor, options = {}) {
         } else if(!action)reload(0,0,-bh*.425,2+Math.sin(progress*Math.PI)*10,10);
       }
       // Ordinary unarmed punches use the existing melee phase clock too.
-      if(!c.isArmed&&tool==='NONE'&&c.meleeTimer>0&&p.arms.length===2) {
+      if(c.isPlayer&&!c.isArmed&&tool==='NONE'&&c.meleeTimer>0&&p.arms.length===2) {
         const t=clamp(1-c.meleeTimer/(c.punchDuration||20)),drive=Math.sin(t*Math.PI),index=c.meleePhase===2?0:1;
         const arm=p.arms[index],side=index?1:-1,target=rotatePoint(13+21*drive,side*(6-3*drive),23);
         arm.fist=mix(arm.fist,target,drive);arm.elbow=M.elbow(arm.shoulder,arm.fist,R.upper,R.fore,rotatePoint(4,side*13,18));
@@ -463,9 +490,26 @@ function player3DPose(actor, options = {}) {
     else if(chemist){if(nativeFrames)fittedOval('coat',p.chest,p.torsoProjectedLength,p.torsoProjectedWidth,torsoLength,palette.shirt,'coat',basis,p.chestHeading);else oval('coat',p.chest,torsoDepth*1.02,torsoWidth*1.02,torsoLength*1.07,palette.shirt,'coat');}
     else if(ninja)oval('hood',p.head,6.6,6.8,7.4,[22,23,30],'headwear');
     else if(cowboy)oval('cowboy_hat',add(p.head,mul(basis.z,4)),6.2,6.5,4.5,[108,80,46],'headwear');
+    else if(!c.isPlayer&&c.eType==='ARMORED_STANDARD') {
+      if(nativeFrames)fittedOval('vest',p.chest,p.torsoProjectedLength*.94,p.torsoProjectedWidth*.90,torsoLength*1.24,[100,104,112],'armor',basis,p.chestHeading);
+      else oval('vest',p.chest,torsoDepth*.94,torsoWidth*.90,torsoLength*1.24,[100,104,112],'armor');
+      if(c.hp>50)oval('helmet',p.head,6.8,6.8,6.8,[43,49,58],'helmet');
+    }
     else {
       const hat=safe(()=>headwearOf(identity),null);
-      if(hat)oval(hat==='STETSON'?'cowboy_hat':hat==='HOOD'?'hood':'helmet',add(p.head,mul(basis.z,2)),hat==='STETSON'?6.2:7.1,hat==='STETSON'?6.5:7.3,hat==='STETSON'?4.5:7.5,[75,86,80],'headwear');
+      if(!c.isPlayer&&hat) {
+        const wide=hat==='STETSON'||hat==='FRONTIER_STETSON'||hat==='BANDIT_HAT';
+        const helmetColor=identity.eType==='NM0_CITY_GUARD'?[108,127,118]:identity.isMilitary?[40,80,40]:identity.eType==='NM0_GREY_FATIGUE'?[170,175,180]:[190,170,130];
+        const color=wide?M.color(identity.hatCol,hat==='BANDIT_HAT'?[34,30,30]:[96,72,46]):helmetColor;
+        if(wide&&nativeFrames)fittedOval('cowboy_hat',add(p.head,mul(basis.z,4)),hat==='BANDIT_HAT'?27:28,hat==='BANDIT_HAT'?25:26,4.5,color,'headwear',basis,p.chestHeading);
+        else oval(wide?'cowboy_hat':hat==='HOOD'||hat==='OCCULT_HOOD'?'hood':'helmet',add(p.head,mul(basis.z,wide?4:2)),wide?6.2:7.1,wide?6.5:7.3,wide?4.5:7.5,color,'headwear');
+      } else if(hat)oval(hat==='STETSON'?'cowboy_hat':hat==='HOOD'?'hood':'helmet',add(p.head,mul(basis.z,2)),hat==='STETSON'?6.2:7.1,hat==='STETSON'?6.5:7.3,hat==='STETSON'?4.5:7.5,[75,86,80],'headwear');
+    }
+    if(!c.isPlayer&&c.eType==='BANDIT'&&nativeFrames) {
+      fittedOval('vest',add(p.chest,mul(forward,-4)),p.torsoProjectedLength*.60,p.torsoProjectedWidth*1.10,torsoLength*1.26,
+        M.color(identity.vestCol,[58,48,44]),'vest',basis,p.chestHeading);
+      fittedOval('hand',add(p.head,mul(forward,3)),6,11,headRadius*.97,
+        M.color(identity.kerchiefCol,[124,40,36]),'bandana',headBasis,p.chestHeading);
     }
     if(identity.jetpack) {
       // The pack is a rigid object attached to the posterior chest surface.
@@ -528,7 +572,19 @@ function player3DPose(actor, options = {}) {
     for(const key of Object.keys(WEAPONS))if(WEAPONS[key]===c.currentWeapon)return key.toLowerCase();return 'pistol';
   },'pistol');
   const weaponNames={assault_rifle:'rifle',rocket_launcher:'rocket',dual_smg:'smg',machine_gun:'smg',dual_smgs:'smg'};
-  const showGun=options.weapon!==false&&!options.skeleton&&kind!=='BOXING'&&kind!=='STUN'&&(c.isArmed||c.reloadTimer>0||mode==='QUICKDRAW'||weaponRecords.some(r=>r.mesh));
+  const molotov=!c.isPlayer&&c.eType==='MOLOTOV';
+  if(molotov&&options.weapon!==false&&!options.skeleton&&kind!=='BOXING'&&kind!=='STUN'&&c.meleeTimer<=0) {
+    // Native bottle body is (16,7)-(24,23), with its wick at (20,5).
+    // Lay the exported flask's neck along that same projected -Y direction;
+    // its glass receives green while the original pale wick cap stays pale.
+    const hand=sockets.rightHand;
+    const heading=Number.isFinite(p.chestHeading)?p.chestHeading:angle;
+    const bottle=add(hand||p.chest,rotatePoint(4,7,0,heading));
+    addPart('flask',[30,120,30],M.matrix(bottle,rotatePoint(1,0,0,heading),point(0,0,1),rotatePoint(0,-1,0,heading),8/1.1,3,10),'held_molotov');
+    sockets.molotovWick=add(bottle,rotatePoint(0,-10,1.7,heading));
+  }
+  const showGun=options.weapon!==false&&!options.skeleton&&kind!=='BOXING'&&kind!=='STUN'&&
+    (c.isPlayer||!molotov&&!c.isUnarmed&&c.meleeTimer<=0)&&(c.isArmed||c.reloadTimer>0||mode==='QUICKDRAW'||weaponRecords.some(r=>r.mesh));
   if(showGun) {
     if(!weaponRecords.length) {
       const count=weaponKey==='dual_smg'?2:1;

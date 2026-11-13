@@ -1,0 +1,1017 @@
+{
+  "gallery": [
+    {
+      "name": "Male rookie",
+      "type": "NM0_ROOKIE",
+      "weapon": "PISTOL",
+      "stance": "STAND",
+      "hp": 90,
+      "nativeDraws": 0,
+      "meshDraws": 1,
+      "paletteMatches": true,
+      "parts": [
+        "pelvis",
+        "torso",
+        "neck",
+        "head",
+        "upper_arm_left",
+        "forearm_left",
+        "upper_arm_left",
+        "hand_left",
+        "upper_arm_right",
+        "forearm_right",
+        "upper_arm_right",
+        "hand_right",
+        "thigh_left",
+        "shin_left",
+        "foot_left",
+        "thigh_right",
+        "shin_right",
+        "foot_right",
+        "weapon_primary"
+      ]
+    },
+    {
+      "name": "Female rookie",
+      "type": "NM0_ROOKIE_F",
+      "weapon": "PISTOL",
+      "stance": "STAND",
+      "hp": 85,
+      "nativeDraws": 0,
+      "meshDraws": 1,
+      "paletteMatches": true,
+      "parts": [
+        "pelvis",
+        "torso",
+        "neck",
+        "head",
+        "upper_arm_left",
+        "forearm_left",
+        "upper_arm_left",
+        "hand_left",
+        "upper_arm_right",
+        "forearm_right",
+        "upper_arm_right",
+        "hand_right",
+        "thigh_left",
+        "shin_left",
+        "foot_left",
+        "thigh_right",
+        "shin_right",
+        "foot_right",
+        "weapon_primary"
+      ]
+    },
+    {
+      "name": "Normal rifle",
+      "type": "NORMAL",
+      "weapon": "ASSAULT_RIFLE",
+      "stance": "STAND",
+      "hp": 100,
+      "nativeDraws": 0,
+      "meshDraws": 1,
+      "paletteMatches": true,
+      "parts": [
+        "pelvis",
+        "torso",
+        "neck",
+        "head",
+        "upper_arm_left",
+        "forearm_left",
+        "upper_arm_left",
+        "hand_left",
+        "upper_arm_right",
+        "forearm_right",
+        "upper_arm_right",
+        "hand_right",
+        "thigh_left",
+        "shin_left",
+        "foot_left",
+        "thigh_right",
+        "shin_right",
+        "foot_right",
+        "weapon_primary"
+      ]
+    },
+    {
+      "name": "Normal shotgun",
+      "type": "NORMAL",
+      "weapon": "SHOTGUN",
+      "stance": "STAND",
+      "hp": 100,
+      "nativeDraws": 0,
+      "meshDraws": 1,
+      "paletteMatches": true,
+      "parts": [
+        "pelvis",
+        "torso",
+        "neck",
+        "head",
+        "upper_arm_left",
+        "forearm_left",
+        "upper_arm_left",
+        "hand_left",
+        "upper_arm_right",
+        "forearm_right",
+        "upper_arm_right",
+        "hand_right",
+        "thigh_left",
+        "shin_left",
+        "foot_left",
+        "thigh_right",
+        "shin_right",
+        "foot_right",
+        "weapon_primary"
+      ]
+    },
+    {
+      "name": "Armored standard",
+      "type": "ARMORED_STANDARD",
+      "weapon": "ASSAULT_RIFLE",
+      "stance": "STAND",
+      "hp": 300,
+      "nativeDraws": 0,
+      "meshDraws": 1,
+      "paletteMatches": true,
+      "parts": [
+        "pelvis",
+        "torso",
+        "neck",
+        "head",
+        "upper_arm_left",
+        "forearm_left",
+        "upper_arm_left",
+        "hand_left",
+        "upper_arm_right",
+        "forearm_right",
+        "upper_arm_right",
+        "hand_right",
+        "thigh_left",
+        "shin_left",
+        "foot_left",
+        "thigh_right",
+        "shin_right",
+        "foot_right",
+        "armor",
+        "helmet",
+        "weapon_primary"
+      ]
+    },
+    {
+      "name": "Armor damaged",
+      "type": "ARMORED_STANDARD",
+      "weapon": "ASSAULT_RIFLE",
+      "stance": "STAND",
+      "hp": 40,
+      "nativeDraws": 0,
+      "meshDraws": 1,
+      "paletteMatches": true,
+      "parts": [
+        "pelvis",
+        "torso",
+        "neck",
+        "head",
+        "upper_arm_left",
+        "forearm_left",
+        "upper_arm_left",
+        "hand_left",
+        "upper_arm_right",
+        "forearm_right",
+        "upper_arm_right",
+        "hand_right",
+        "thigh_left",
+        "shin_left",
+        "foot_left",
+        "thigh_right",
+        "shin_right",
+        "foot_right",
+        "armor",
+        "weapon_primary"
+      ]
+    },
+    {
+      "name": "Grey fatigues",
+      "type": "NM0_GREY_FATIGUE",
+      "weapon": "ASSAULT_RIFLE",
+      "stance": "STAND",
+      "hp": 250,
+      "nativeDraws": 0,
+      "meshDraws": 1,
+      "paletteMatches": true,
+      "parts": [
+        "pelvis",
+        "torso",
+        "neck",
+        "head",
+        "upper_arm_left",
+        "forearm_left",
+        "upper_arm_left",
+        "hand_left",
+        "upper_arm_right",
+        "forearm_right",
+        "upper_arm_right",
+        "hand_right",
+        "thigh_left",
+        "shin_left",
+        "foot_left",
+        "thigh_right",
+        "shin_right",
+        "foot_right",
+        "headwear",
+        "weapon_primary"
+      ]
+    },
+    {
+      "name": "Military",
+      "type": "MILITARY_NEUTRAL",
+      "weapon": "ASSAULT_RIFLE",
+      "stance": "STAND",
+      "hp": 150,
+      "nativeDraws": 0,
+      "meshDraws": 1,
+      "paletteMatches": true,
+      "parts": [
+        "pelvis",
+        "torso",
+        "neck",
+        "head",
+        "upper_arm_left",
+        "forearm_left",
+        "upper_arm_left",
+        "hand_left",
+        "upper_arm_right",
+        "forearm_right",
+        "upper_arm_right",
+        "hand_right",
+        "thigh_left",
+        "shin_left",
+        "foot_left",
+        "thigh_right",
+        "shin_right",
+        "foot_right",
+        "headwear",
+        "weapon_primary"
+      ]
+    },
+    {
+      "name": "Bandit",
+      "type": "BANDIT",
+      "weapon": "REVOLVER",
+      "stance": "STAND",
+      "hp": 130,
+      "nativeDraws": 0,
+      "meshDraws": 1,
+      "paletteMatches": true,
+      "parts": [
+        "pelvis",
+        "torso",
+        "neck",
+        "head",
+        "upper_arm_left",
+        "forearm_left",
+        "upper_arm_left",
+        "hand_left",
+        "upper_arm_right",
+        "forearm_right",
+        "upper_arm_right",
+        "hand_right",
+        "thigh_left",
+        "shin_left",
+        "foot_left",
+        "thigh_right",
+        "shin_right",
+        "foot_right",
+        "headwear",
+        "vest",
+        "bandana",
+        "weapon_primary"
+      ]
+    },
+    {
+      "name": "Female pistol",
+      "type": "FEMALE_PISTOL",
+      "weapon": "PISTOL",
+      "stance": "STAND",
+      "hp": 100,
+      "nativeDraws": 0,
+      "meshDraws": 1,
+      "paletteMatches": true,
+      "parts": [
+        "pelvis",
+        "torso",
+        "neck",
+        "head",
+        "upper_arm_left",
+        "forearm_left",
+        "upper_arm_left",
+        "hand_left",
+        "upper_arm_right",
+        "forearm_right",
+        "upper_arm_right",
+        "hand_right",
+        "thigh_left",
+        "shin_left",
+        "foot_left",
+        "thigh_right",
+        "shin_right",
+        "foot_right",
+        "weapon_primary"
+      ]
+    },
+    {
+      "name": "Rifle crouch",
+      "type": "NORMAL",
+      "weapon": "ASSAULT_RIFLE",
+      "stance": "CROUCH",
+      "hp": 100,
+      "nativeDraws": 0,
+      "meshDraws": 1,
+      "paletteMatches": true,
+      "parts": [
+        "pelvis",
+        "torso",
+        "neck",
+        "head",
+        "upper_arm_left",
+        "forearm_left",
+        "upper_arm_left",
+        "hand_left",
+        "upper_arm_right",
+        "forearm_right",
+        "upper_arm_right",
+        "hand_right",
+        "thigh_left",
+        "shin_left",
+        "foot_left",
+        "thigh_right",
+        "shin_right",
+        "foot_right",
+        "weapon_primary"
+      ]
+    },
+    {
+      "name": "Bandit reload",
+      "type": "BANDIT",
+      "weapon": "REVOLVER",
+      "stance": "STAND",
+      "hp": 130,
+      "nativeDraws": 0,
+      "meshDraws": 1,
+      "paletteMatches": true,
+      "parts": [
+        "pelvis",
+        "torso",
+        "neck",
+        "head",
+        "upper_arm_left",
+        "forearm_left",
+        "upper_arm_left",
+        "hand_left",
+        "upper_arm_right",
+        "forearm_right",
+        "upper_arm_right",
+        "hand_right",
+        "thigh_left",
+        "shin_left",
+        "foot_left",
+        "thigh_right",
+        "shin_right",
+        "foot_right",
+        "headwear",
+        "vest",
+        "bandana",
+        "weapon_primary"
+      ]
+    },
+    {
+      "name": "Firebomb",
+      "type": "MOLOTOV",
+      "weapon": "PISTOL",
+      "stance": "STAND",
+      "hp": 100,
+      "nativeDraws": 0,
+      "meshDraws": 1,
+      "paletteMatches": true,
+      "parts": [
+        "pelvis",
+        "torso",
+        "neck",
+        "head",
+        "upper_arm_left",
+        "forearm_left",
+        "upper_arm_left",
+        "hand_left",
+        "upper_arm_right",
+        "forearm_right",
+        "upper_arm_right",
+        "hand_right",
+        "thigh_left",
+        "shin_left",
+        "foot_left",
+        "thigh_right",
+        "shin_right",
+        "foot_right",
+        "held_molotov"
+      ],
+      "bottleColor": [
+        30,
+        120,
+        30
+      ]
+    },
+    {
+      "name": "City guard",
+      "type": "NM0_CITY_GUARD",
+      "weapon": "ASSAULT_RIFLE",
+      "stance": "STAND",
+      "hp": 280,
+      "nativeDraws": 0,
+      "meshDraws": 1,
+      "paletteMatches": true,
+      "parts": [
+        "pelvis",
+        "torso",
+        "neck",
+        "head",
+        "upper_arm_left",
+        "forearm_left",
+        "upper_arm_left",
+        "hand_left",
+        "upper_arm_right",
+        "forearm_right",
+        "upper_arm_right",
+        "hand_right",
+        "thigh_left",
+        "shin_left",
+        "foot_left",
+        "thigh_right",
+        "shin_right",
+        "foot_right",
+        "headwear",
+        "weapon_primary"
+      ]
+    },
+    {
+      "name": "Explicit armed rifle",
+      "type": "NORMAL",
+      "weapon": "ASSAULT_RIFLE",
+      "stance": "STAND",
+      "hp": 100,
+      "nativeDraws": 0,
+      "meshDraws": 1,
+      "paletteMatches": true,
+      "parts": [
+        "pelvis",
+        "torso",
+        "neck",
+        "head",
+        "upper_arm_left",
+        "forearm_left",
+        "upper_arm_left",
+        "hand_left",
+        "upper_arm_right",
+        "forearm_right",
+        "upper_arm_right",
+        "hand_right",
+        "thigh_left",
+        "shin_left",
+        "foot_left",
+        "thigh_right",
+        "shin_right",
+        "foot_right",
+        "weapon_primary"
+      ]
+    },
+    {
+      "name": "Female crouch",
+      "type": "NM0_ROOKIE_F",
+      "weapon": "PISTOL",
+      "stance": "CROUCH",
+      "hp": 85,
+      "nativeDraws": 0,
+      "meshDraws": 1,
+      "paletteMatches": true,
+      "parts": [
+        "pelvis",
+        "torso",
+        "neck",
+        "head",
+        "upper_arm_left",
+        "forearm_left",
+        "upper_arm_left",
+        "hand_left",
+        "upper_arm_right",
+        "forearm_right",
+        "upper_arm_right",
+        "hand_right",
+        "thigh_left",
+        "shin_left",
+        "foot_left",
+        "thigh_right",
+        "shin_right",
+        "foot_right",
+        "weapon_primary"
+      ]
+    }
+  ],
+  "stats": {
+    "draws": 16,
+    "meshUploads": 35,
+    "triangles": 8150,
+    "gpuDrawCalls": 784,
+    "contextLosses": 0,
+    "contextRestores": 0,
+    "resizes": 2,
+    "failures": 0,
+    "bufferCreates": 105,
+    "programCreates": 1,
+    "stainDraws": 0,
+    "lastDrawMs": 0.40000000037252903,
+    "totalDrawMs": 587.3999999985099
+  },
+  "gpuError": 0,
+  "exclusions": [
+    {
+      "name": "ARMORED",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "ROBOT",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "BUG",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "SNAIL",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "COW",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "HORSE",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "AERIAL",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "AERIAL_PISTOL",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "ALIEN_GATOR",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "SAUCER",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "SNAIL_HYBRID",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "injury FALL",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "injury PRONE",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "injury SEATED",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "prone firing",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "friendly rookie",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "neutral military",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "unarmed human",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "electric skeleton",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "stunned",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "civilian",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "mounted bandit",
+      "eligible": false,
+      "draws": 0
+    },
+    {
+      "name": "enemy corpse",
+      "draws": 0
+    }
+  ],
+  "effects": {
+    "flashPixels": 2740,
+    "muzzlePixels": 131464,
+    "reloadPixels": 4754,
+    "woundPixels": 193,
+    "disabledDraws": 0
+  },
+  "motion": [
+    {
+      "frame": 0,
+      "meshDraws": 6
+    },
+    {
+      "frame": 1,
+      "meshDraws": 6
+    },
+    {
+      "frame": 2,
+      "meshDraws": 6
+    },
+    {
+      "frame": 3,
+      "meshDraws": 6
+    },
+    {
+      "frame": 4,
+      "meshDraws": 6
+    },
+    {
+      "frame": 5,
+      "meshDraws": 6
+    },
+    {
+      "frame": 6,
+      "meshDraws": 6
+    },
+    {
+      "frame": 7,
+      "meshDraws": 6
+    },
+    {
+      "frame": 8,
+      "meshDraws": 6
+    },
+    {
+      "frame": 9,
+      "meshDraws": 6
+    },
+    {
+      "frame": 10,
+      "meshDraws": 6
+    },
+    {
+      "frame": 11,
+      "meshDraws": 6
+    },
+    {
+      "frame": 12,
+      "meshDraws": 6
+    },
+    {
+      "frame": 13,
+      "meshDraws": 6
+    },
+    {
+      "frame": 14,
+      "meshDraws": 6
+    },
+    {
+      "frame": 15,
+      "meshDraws": 6
+    },
+    {
+      "frame": 16,
+      "meshDraws": 6
+    },
+    {
+      "frame": 17,
+      "meshDraws": 6
+    },
+    {
+      "frame": 18,
+      "meshDraws": 6
+    },
+    {
+      "frame": 19,
+      "meshDraws": 6
+    },
+    {
+      "frame": 20,
+      "meshDraws": 6
+    },
+    {
+      "frame": 21,
+      "meshDraws": 6
+    },
+    {
+      "frame": 22,
+      "meshDraws": 6
+    },
+    {
+      "frame": 23,
+      "meshDraws": 6
+    },
+    {
+      "frame": 24,
+      "meshDraws": 6
+    },
+    {
+      "frame": 25,
+      "meshDraws": 6
+    },
+    {
+      "frame": 26,
+      "meshDraws": 6
+    },
+    {
+      "frame": 27,
+      "meshDraws": 6
+    },
+    {
+      "frame": 28,
+      "meshDraws": 6
+    },
+    {
+      "frame": 29,
+      "meshDraws": 6
+    },
+    {
+      "frame": 30,
+      "meshDraws": 6
+    },
+    {
+      "frame": 31,
+      "meshDraws": 6
+    },
+    {
+      "frame": 32,
+      "meshDraws": 6
+    },
+    {
+      "frame": 33,
+      "meshDraws": 6
+    },
+    {
+      "frame": 34,
+      "meshDraws": 6
+    },
+    {
+      "frame": 35,
+      "meshDraws": 6
+    },
+    {
+      "frame": 36,
+      "meshDraws": 6
+    },
+    {
+      "frame": 37,
+      "meshDraws": 6
+    },
+    {
+      "frame": 38,
+      "meshDraws": 6
+    },
+    {
+      "frame": 39,
+      "meshDraws": 6
+    },
+    {
+      "frame": 40,
+      "meshDraws": 6
+    },
+    {
+      "frame": 41,
+      "meshDraws": 6
+    },
+    {
+      "frame": 42,
+      "meshDraws": 6
+    },
+    {
+      "frame": 43,
+      "meshDraws": 6
+    },
+    {
+      "frame": 44,
+      "meshDraws": 6
+    },
+    {
+      "frame": 45,
+      "meshDraws": 6
+    },
+    {
+      "frame": 46,
+      "meshDraws": 6
+    },
+    {
+      "frame": 47,
+      "meshDraws": 6
+    },
+    {
+      "frame": 48,
+      "meshDraws": 6
+    },
+    {
+      "frame": 49,
+      "meshDraws": 6
+    },
+    {
+      "frame": 50,
+      "meshDraws": 6
+    },
+    {
+      "frame": 51,
+      "meshDraws": 6
+    },
+    {
+      "frame": 52,
+      "meshDraws": 6
+    },
+    {
+      "frame": 53,
+      "meshDraws": 6
+    },
+    {
+      "frame": 54,
+      "meshDraws": 6
+    },
+    {
+      "frame": 55,
+      "meshDraws": 6
+    },
+    {
+      "frame": 56,
+      "meshDraws": 6
+    },
+    {
+      "frame": 57,
+      "meshDraws": 6
+    },
+    {
+      "frame": 58,
+      "meshDraws": 6
+    },
+    {
+      "frame": 59,
+      "meshDraws": 6
+    }
+  ],
+  "crowd": {
+    "actors": 24,
+    "meshDraws": 288,
+    "uploadsBefore": 35,
+    "uploadsAfter": 35,
+    "nativeMs": {
+      "median": 21.59999999962747,
+      "p95": 53.40000000037253
+    },
+    "sharedMs": {
+      "median": 192,
+      "p95": 320.40000000037253
+    },
+    "gpuError": 0,
+    "renderer": {
+      "enabled": true,
+      "ready": true,
+      "failure": "",
+      "generation": 1,
+      "width": 256,
+      "height": 256,
+      "draws": 693,
+      "meshUploads": 35,
+      "triangles": 8150,
+      "gpuDrawCalls": 33861,
+      "contextLosses": 0,
+      "contextRestores": 0,
+      "resizes": 3,
+      "failures": 0,
+      "bufferCreates": 105,
+      "programCreates": 1,
+      "stainDraws": 1,
+      "lastDrawMs": 35.80000000074506,
+      "totalDrawMs": 2439.900000035763,
+      "lighting": {
+        "sunWeight": 0.15873263922241143,
+        "localWeight": 0,
+        "contrast": 0.2886047985862026,
+        "direction": [
+          0.6335947513580322,
+          -0.4953998327255249,
+          0.5942530632019043
+        ],
+        "localSources": 0
+      }
+    }
+  },
+  "world": {
+    "meshDraws": 57,
+    "enemies": 37,
+    "fault": null,
+    "nativeFrameMs": {
+      "median": 52.600000001490116,
+      "p95": 68.69999999925494
+    },
+    "sharedFrameMs": {
+      "median": 21.399999998509884,
+      "p95": 627.9000000003725
+    },
+    "worldLighting": {
+      "ok": true,
+      "on": true,
+      "failure": ""
+    },
+    "stats": {
+      "enabled": true,
+      "ready": true,
+      "failure": "",
+      "generation": 1,
+      "width": 128,
+      "height": 128,
+      "draws": 190,
+      "meshUploads": 35,
+      "triangles": 8150,
+      "gpuDrawCalls": 9020,
+      "contextLosses": 0,
+      "contextRestores": 0,
+      "resizes": 1,
+      "failures": 0,
+      "bufferCreates": 105,
+      "programCreates": 1,
+      "stainDraws": 0,
+      "lastDrawMs": 0,
+      "totalDrawMs": 1885.9000000227243,
+      "lighting": {
+        "sunWeight": 0.5348782712627261,
+        "localWeight": 0,
+        "contrast": 0.9725059477504111,
+        "direction": [
+          -0.17830127477645874,
+          -0.7668296098709106,
+          0.6165882349014282
+        ],
+        "localSources": 0
+      }
+    }
+  },
+  "sourceBytes": 5257970,
+  "nodeChecks": {
+    "enemyNativePoseAndPurity": 1118,
+    "enemyDispatchEffectsAndFallback": 330,
+    "playerNativeFidelity": 6869,
+    "playerHead": 258,
+    "playerJetpack": 2265,
+    "playerSupportHand": 9639,
+    "playerCorpseHead": 23
+  },
+  "nativePoseComparison": {
+    "poses": 80,
+    "maximumXYError": 0
+  },
+  "physicalPhonePerformanceMeasured": false,
+  "timingNotes": "Software SwiftShader measurements are noisy; separate mesh rendering and Canvas compositing add crowd cost. These are not physical-device FPS measurements.",
+  "previews": {
+    "poses": "previews/enemy3d-poses.png",
+    "motion": "previews/enemy3d-motion.mp4",
+    "world": "previews/enemy3d-in-game.png",
+    "crowd": "previews/enemy3d-crowd.png"
+  }
+}

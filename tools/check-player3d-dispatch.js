@@ -78,8 +78,8 @@ const after = probe('({ammo:player.ammo,reload:player.reloadTimer,burst:player.s
 assert.deepStrictEqual(after,before);checks++;
 
 ctx.__player3DDispatch.length=0;
-probe('new Character(0,0,false).show();');
-check(ctx.__player3DDispatch.length === 0, 'enemy painting remains on its native path');
+probe("new Character(0,0,false,'BUG').show();");
+check(ctx.__player3DDispatch.length === 0, 'nonhuman enemy painting remains on its native path');
 for (const draw of ['()=>false', "()=>{throw Error('context lost');}"]) {
   probe(`Player3D.draw=${draw};player.hitFlash=3;player.show();`);
   check(probe('player.hitFlash') === 2, 'unavailable mesh rendering uses native fallback exactly once');
