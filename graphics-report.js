@@ -1,5 +1,5 @@
-// On-demand diagnostics from the game's real contexts. No test canvas, driver
-// selection, flags, quality changes or reporting requests are made here.
+// On-demand diagnostics from the game's real contexts. This panel creates no
+// WebGL contexts and does not select drivers or change rendering settings.
 (() => {
   'use strict';
   if (new URLSearchParams(window.location.search).get('graphics') !== '1') return;
@@ -9,11 +9,12 @@
   const panel = document.createElement('aside');
   panel.id = 'graphics-report'; panel.setAttribute('aria-label', 'Graphics report');
   panel.innerHTML = '<h1>Graphics report</h1>' +
-    '<p class="muted">The game requests high performance. Android WebView chooses the driver; this page cannot enable Vulkan.</p>' +
+    '<p class="muted">This report checks the selected driver, character rendering, and canvas copying separately.</p>' +
     '<section data-context="lighting"><h2>World lighting</h2><p></p></section>' +
     '<section data-context="characters"><h2>Character models</h2><p></p></section>' +
     '<p class="muted">These WebGL reports do not identify the main 2D canvas compositor.</p>' +
     '<button type="button" data-action="refresh">Refresh</button>' +
+    '<button type="button" data-action="recheck">Recheck character pixels</button>' +
     '<button type="button" data-action="copy">Copy report</button>' +
     '<button type="button" data-action="close">Close</button>' +
     '<p><a data-action="chrome" hidden>Open local game in Chrome</a></p>' +
@@ -33,9 +34,14 @@
       c.acceleration === 'hardware-reported' ? 'GPU driver reported' : 'Driver details not exposed';
     const backend = c.backend && c.backend !== 'unknown' ? c.backend.toUpperCase() : 'backend unknown';
     const driver = c.unmaskedRenderer || c.renderer || 'Renderer name unavailable';
-    const state = owner.ready ? owner.enabled ? 'Active' : 'Available, currently disabled' : 'Context exists; renderer not ready';
+    const state = owner.pipeline&&owner.pipeline.validation==='failed'?'Native fallback active':
+      owner.ready ? owner.enabled ? 'Active' : 'Available, currently disabled' : 'Context exists; renderer not ready';
     const failure = owner.failure ? `\n${owner.failure}` : '';
-    return `${state} · ${acceleration} · ${backend}\n${driver}${failure}`;
+    const pipeline=owner.pipeline;
+    const health=pipeline?`\nCharacter pixels: ${pipeline.validation} · ${pipeline.stage} · ${pipeline.profile}`:'';
+    const work=owner.workload;
+    const workload=work&&work.draws?`\nLast actor: ${work.lastGpuDrawCalls} GPU draw calls · submit ${(Number(work.lastSubmitMs)||0).toFixed(2)} ms · copy ${(Number(work.lastCopyMs)||0).toFixed(2)} ms (CPU time)`:'';
+    return `${state} · ${acceleration} · ${backend}\n${driver}${health}${workload}${failure}`;
   }
   function refresh() {
     if (typeof getGameGraphicsDiagnostics !== 'function') {
@@ -53,6 +59,13 @@
       'Renderer names can be hidden by browser privacy settings; unknown does not mean the GPU is off.';
   }
   panel.querySelector('[data-action="refresh"]').addEventListener('click', refresh);
+  panel.querySelector('[data-action="recheck"]').addEventListener('click', () => {
+    const queued=typeof Player3D!=='undefined'&&Player3D&&
+      typeof Player3D.requestValidation==='function'&&Player3D.requestValidation();
+    refresh();
+    status.textContent=queued?'Pixel check queued for the next character draw. Close the report if the game is paused.':
+      'Start the game to create the character renderer, then recheck.';
+  });
   panel.querySelector('[data-action="copy"]').addEventListener('click', async () => {
     refresh(); if (!report) return;
     const value = JSON.stringify(report, null, 2);

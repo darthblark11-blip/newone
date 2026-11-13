@@ -69,10 +69,25 @@ async function main(){
   await page.evaluate(()=>{window.__reportPointerEvents=0;window.addEventListener('pointerdown',()=>__reportPointerEvents++);});
   await page.locator('[data-action="refresh"]').click();
   assert.equal(await page.evaluate(()=>__reportPointerEvents),0,'report controls do not trigger game pointer input');
+  const beforeRecheck=await page.evaluate(()=>({contexts:__graphicsContexts.length,parameters:__graphicsParameters}));
+  await page.locator('[data-action="recheck"]').click();
+  assert.match(await page.locator('[data-status]').textContent(),/queued/,'explicit pixel recheck queues work for an actual character draw');
+  assert.deepEqual(await page.evaluate(()=>({contexts:__graphicsContexts.length,parameters:__graphicsParameters})),beforeRecheck,
+   'queuing validation creates no probe context or driver queries');
+  const pixels=await page.evaluate(()=>{
+   const actor=new Character(0,0,true);actor.isArmed=true;actor.currentWeapon=WEAPONS.PISTOL;
+   push();translate(206,400);scale(3);const drawn=Player3D.draw(player3DPose(actor),drawingContext);pop();
+   return {drawn,report:getGameGraphicsDiagnostics()};
+  });
+  assert.ok(pixels.drawn&&pixels.report.characters.pipeline.validation==='verified','report receives actual pixel validation');
+  assert.ok(pixels.report.characters.workload.lastGpuDrawCalls>0,'report includes actual actor draw workload');
+  assert.match(pixels.report.characters.workload.timing,/not GPU execution/,'CPU timing is not presented as GPU timing');
   await page.locator('[data-action="copy"]').click();
   await page.waitForFunction(()=>/copied|Select and copy/.test(document.querySelector('[data-status]').textContent));
   const copied=JSON.parse(await page.locator('#graphics-report pre').textContent());
   assert.equal(copied.characters.context.acceleration,'software','copied report keeps truthful backend evidence');
+  assert.equal(copied.characters.pipeline.stage,'ready','copied report includes the completed pipeline check');
+  assert.match(await page.locator('[data-context="characters"] p').textContent(),/Character pixels: verified/);
   await page.screenshot({path:path.join(out,'graphics-report.png')});
   await page.locator('[data-action="close"]').click();
   assert.equal(await page.locator('#graphics-report').isVisible(),false,'report can be closed to start playing');

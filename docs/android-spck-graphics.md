@@ -1,5 +1,64 @@
 # Android graphics in SPCK
 
+## Vulkan selected, but character models invisible
+
+The user confirmed that SPCK's preview reports **ANGLE using Vulkan with the
+Adreno driver**, while player models remain invisible. Driver selection has
+succeeded; visible output still depends on the character draw and its import
+into the main p5 Canvas2D surface. This phone-specific failure has not been
+reproduced in the development environment.
+
+The investigation found a concrete failure-handling gap: `drawImage()` can
+return without an exception even when the GPU produced no fragments or the
+canvas import copied no visible pixels. The old renderer reported success in
+both cases and suppressed the native character fallback. Both conditions were
+reproduced with fault injection in real Chromium/WebGL2, including the
+zero-WebGL-error case.
+
+The character shaders contain a matrix projection, normal-based lighting and
+three shading bands, with no texture lookups or loops. A standard pistol actor
+uses 47 GPU draw calls; NM0 grey and armored actors previously measured 58 and
+52. The meshes and 111 buffers are persistent across animation. Repeated
+per-actor draw submission and immediate WebGL-to-Canvas copies are plausible
+sources of overhead; those counts do not establish the cause of invisibility
+or measure Vulkan translation time. No matching Adreno/SPCK driver defect was
+confirmed.
+
+The character context now requests **single-sample rendering**
+(`antialias: false`), matching the world-lighting context. This removes the
+default-framebuffer MSAA resolve from each character copy while retaining the
+model geometry, shading, depth, stencil, blood and animation. No renderer-name
+heuristic disables Vulkan or downgrades the models.
+
+After initialization, backing-buffer growth or context restoration, the first
+visible character draw checks WebGL errors, framebuffer completeness, GPU
+alpha pixels and the same WebGL canvas imported into a scratch Canvas2D
+surface. These checks use the existing character WebGL context. They perform
+one synchronous GPU readback per check, can pause that first draw, and are
+absent from subsequent ordinary actor draws. The scratch import validates the
+cross-API copy, not Android's final on-screen compositor or every destination
+canvas. Intentionally alpha-zero and empty selections do not count as a
+broken renderer.
+
+A failed check returns control to the existing native character painter and
+stops repeated failed GPU submissions for that context generation. The
+optional `?graphics=1` report now includes:
+
+- `characters.pipeline.validation`: `pending`, `verified` or `failed`.
+- `characters.pipeline.stage`: `shader`, `initialization`, `draw`,
+  `canvas-transfer` or `ready`, with a failure message and WebGL error if any.
+- GPU and copied alpha-pixel counts, validation count and validation time.
+- Actual draw calls for the last actor, upload/buffer counts, and CPU elapsed
+  times for submission and copying. These are **not GPU execution timings**.
+
+Start the game, reopen **Graphics**, then use **Recheck character pixels** to
+queue another check if models disappear later without a resize or context
+loss. Close the report to resume a paused game, then reopen it and use
+**Copy report**. A successful check identifies where pixels reached; it does
+not prove that every final compositor path on the phone is correct.
+
+## Android host and driver settings
+
 SPCK's built-in preview uses an embedded browser. Chrome's `chrome://flags`
 settings do not configure that embedded browser: Chrome and Android WebView
 have separate settings. [Chrome's WebView documentation](https://developer.chrome.com/docs/webview)
@@ -90,10 +149,14 @@ loads files from its server.
 node tools/check-graphics-context.js
 node tools/check-graphics-context-browser.cjs
 node tools/check-graphics-launcher-browser.cjs
+node tools/check-player3d-transfer-browser.cjs
+node tools/check-player3d-browser.cjs
 python3 tools/build-player3d.py --check
 ```
 
 Browser checks use real Chromium/p5 with a software driver to verify truthful
 classification, high-performance context requests, caching, context loss and
-restoration, and the local launcher's optional controls. They do not verify
-SPCK, Vulkan support or performance on the user's physical phone.
+restoration, the local launcher's optional controls, actual character pixels,
+injected blank draw/transfer failures, native fallback, explicit rechecks and
+the absence of repeated readbacks during stable animation. They do not verify
+SPCK or Adreno behavior or performance on the user's physical phone.

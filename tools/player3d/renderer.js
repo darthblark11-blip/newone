@@ -48,7 +48,8 @@ void main() {
 }`;
   const stats = { draws:0, meshUploads:0, triangles:0, gpuDrawCalls:0,
     contextLosses:0, contextRestores:0, resizes:0, failures:0,
-    bufferCreates:0, programCreates:0, stainDraws:0, perspectiveDraws:0, lastDrawMs:0, totalDrawMs:0 };
+    bufferCreates:0, programCreates:0, stainDraws:0, perspectiveDraws:0, lastDrawMs:0, totalDrawMs:0,
+    validationReadbacks:0, lastGpuDrawCalls:0, lastSubmitMs:0, lastCopyMs:0 };
   const normal = new Float32Array(9), color = new Float32Array(3);
   const stainMatrix=new Float32Array([0,0,1,0,1,0,0,0,0,1,0,0,0,0,0,1]);
   const emptyOptions={}, defaultBands=[.48,.78,1.06], defaultThresholds=[.32,.72], defaultColor=[.65,.65,.68];
@@ -58,16 +59,27 @@ void main() {
   let canvas = null, gl = null, program = null, uniforms = null;
   let meshes = Object.create(null), source = null, failure = '', failed = false;
   let lost = false, generation = 0;
+  // ANGLE can create/link a context successfully yet fail its drawable or the
+  // WebGL -> Canvas2D import. Do not mistake that for a successfully drawn actor.
+  // Read back only after initialization/resize/restoration, never every actor.
+  const pipeline={profile:'single-sample',validation:'pending',stage:'initialization',
+    checks:0,gpuPixels:0,canvasPixels:0,glError:null,validationMs:0};
+  let transferCanvas=null, transferContext=null, validationPixels=null;
   const lightDirection=new Float32Array(3),localKeys=new Array(4),localWeights=new Float64Array(4);
   const lighting={sunWeight:0,localWeight:0,contrast:1,direction:lightDirection,localSources:0};
   const now = () => typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
   const api = { enabled:true, maxSize:1024, stats, ensure, draw, validateAsset, dispose,
     sampleLighting,
+    requestValidation(){
+      if(lost||!program)return false;
+      failed=false;failure='';invalidatePipeline();return true;
+    },
     projectPoint(snapshot,point,out){return Player3DView.project(point,snapshot&&snapshot.renderView,out);},
     get canvas(){return canvas;}, get gl(){return gl;},
     get failure(){return failure;}, get ready(){return !!program&&!lost&&!failed;},
     getDiagnostics(){return {enabled:api.enabled,ready:api.ready,failure,generation,
       width:canvas?canvas.width:0,height:canvas?canvas.height:0,...stats,
+      pipeline:{...pipeline},
       context:typeof gameGraphicsContextInfo==='function'?gameGraphicsContextInfo(gl,lost?'lost':failed&&!gl?'unavailable':null):null,
       view:lastView?{...lastView}:{enabled:false},
       lighting:{sunWeight:lighting.sunWeight,localWeight:lighting.localWeight,
@@ -210,16 +222,69 @@ void main() {
     meshes=Object.create(null);program=null;uniforms=null;
   }
 
+  function invalidatePipeline() {
+    pipeline.validation='pending';pipeline.stage='initialization';
+    pipeline.gpuPixels=pipeline.canvasPixels=0;pipeline.glError=null;
+  }
+
+  function checkErrors(stage) {
+    const code=gl.getError();
+    if(code===gl.NO_ERROR)return;
+    const name=code===gl.INVALID_ENUM?'INVALID_ENUM':code===gl.INVALID_VALUE?'INVALID_VALUE':
+      code===gl.INVALID_OPERATION?'INVALID_OPERATION':code===gl.INVALID_FRAMEBUFFER_OPERATION?'INVALID_FRAMEBUFFER_OPERATION':
+      code===gl.OUT_OF_MEMORY?'OUT_OF_MEMORY':code===gl.CONTEXT_LOST_WEBGL?'CONTEXT_LOST_WEBGL':'0x'+code.toString(16);
+    pipeline.glError=name;pipeline.stage=stage;
+    throw Error('Character '+stage+': WebGL '+name+'; using native characters');
+  }
+
+  function countPixels(data,length) {
+    let count=0;
+    for(let i=3;i<length;i+=4)if(data[i])count++;
+    return count;
+  }
+
+  function validatePipeline(pixelW,pixelH) {
+    const started=now();pipeline.checks++;pipeline.stage='draw';
+    try {
+      checkErrors('draw');
+      if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE)
+        throw Error('Character draw: incomplete framebuffer; using native characters');
+      if(gl.drawingBufferWidth< pixelW||gl.drawingBufferHeight< pixelH)
+        throw Error('Character draw: drawing buffer smaller than the actor; using native characters');
+      const length=pixelW*pixelH*4;
+      if(!validationPixels||validationPixels.length<length)validationPixels=new Uint8Array(length);
+      gl.readPixels(0,canvas.height-pixelH,pixelW,pixelH,gl.RGBA,gl.UNSIGNED_BYTE,validationPixels);
+      stats.validationReadbacks++;checkErrors('draw');
+      pipeline.gpuPixels=countPixels(validationPixels,length);
+      if(!pipeline.gpuPixels)throw Error('Character draw: GPU produced transparent pixels; using native characters');
+      pipeline.stage='canvas-transfer';
+      if(!transferCanvas) {
+        transferCanvas=document.createElement('canvas');
+        transferContext=transferCanvas.getContext('2d');
+      }
+      if(!transferContext)throw Error('Character canvas-transfer: Canvas2D unavailable; using native characters');
+      transferCanvas.width=pixelW;transferCanvas.height=pixelH;
+      transferContext.drawImage(canvas,0,0,pixelW,pixelH,0,0,pixelW,pixelH);
+      pipeline.canvasPixels=countPixels(transferContext.getImageData(0,0,pixelW,pixelH).data,length);
+      checkErrors('canvas-transfer');
+      if(!pipeline.canvasPixels)
+        throw Error('Character canvas-transfer: GPU pixels disappeared during Canvas2D import; using native characters');
+      pipeline.validation='verified';pipeline.stage='ready';
+    } finally {pipeline.validationMs=now()-started;}
+  }
+
   function contextLost(event) {
     event.preventDefault();lost=true;stats.contextLosses++;
     if(typeof gameGraphicsForgetContext==='function')gameGraphicsForgetContext(gl);
     failure='Player WebGL context lost; native rendering remains available';
+    invalidatePipeline();
     // Lost WebGL handles cannot be reused after restoration.
     meshes=Object.create(null);program=null;uniforms=null;
   }
 
   function contextRestored() {
     lost=false;failed=false;failure='';stats.contextRestores++;
+    invalidatePipeline();
     if(typeof gameGraphicsForgetContext==='function')gameGraphicsForgetContext(gl);
     // Rebuild lazily when the next player is actually visible.
   }
@@ -228,9 +293,9 @@ void main() {
     if(!api.enabled||lost) return false;
     asset=asset||(typeof PLAYER3D_ASSET!=='undefined'?PLAYER3D_ASSET:null);
     if(!asset) return false;
-    if(source!==asset) {releaseResources();source=asset;failed=false;failure='';}
-    if(program) return true;
+    if(source!==asset) {releaseResources();source=asset;failed=false;failure='';invalidatePipeline();}
     if(failed) return false;
+    if(program) return true;
     try {
       const checked=validateAsset(asset);
       if(!checked.ok) throw Error(checked.errors.join('; '));
@@ -241,10 +306,14 @@ void main() {
         canvas.addEventListener('webglcontextrestored',contextRestored,false);
       }
       if(!gl) gl=canvas.getContext('webgl2',{alpha:true,depth:true,stencil:true,
-        antialias:true,premultipliedAlpha:true,preserveDrawingBuffer:true,
+        // These small actor images are immediately scaled/composited by p5.
+        // A single-sample target avoids an MSAA resolve for every actor copy,
+        // and removes that extra ANGLE/Vulkan dependency on mobile WebViews.
+        antialias:false,premultipliedAlpha:true,preserveDrawingBuffer:true,
         powerPreference:'high-performance',failIfMajorPerformanceCaveat:false});
       if(!gl) throw Error('WebGL2 is unavailable for the player renderer');
       if(typeof gameGraphicsContextInfo==='function')gameGraphicsContextInfo(gl);
+      pipeline.stage='shader';
       const vertex=shader(gl.VERTEX_SHADER,vertexSource),fragment=shader(gl.FRAGMENT_SHADER,fragmentSource);
       program=gl.createProgram();gl.attachShader(program,vertex);gl.attachShader(program,fragment);
       gl.linkProgram(program);gl.deleteShader(vertex);gl.deleteShader(fragment);
@@ -252,6 +321,7 @@ void main() {
       stats.programCreates++;uniforms={};
       for(const name of ['uModel','uNormal','uBounds','uDepth','uView','uOutline','uLight','uColor','uBands','uThresholds','uShadeContrast','uInk','uAlpha'])
         uniforms[name]=gl.getUniformLocation(program,name);
+      pipeline.stage='initialization';
       for(const name of Object.keys(asset.meshes)) {
         const mesh=asset.meshes[name],vao=gl.createVertexArray(),buffers=[];
         gl.bindVertexArray(vao);
@@ -274,9 +344,11 @@ void main() {
         stats.meshUploads++;stats.bufferCreates+=3;
       }
       gl.bindVertexArray(null);stats.triangles=checked.triangles;generation++;failed=false;failure='';
+      checkErrors('initialization');
       return true;
     } catch(error) {
       failure=String(error&&error.message||error);failed=true;stats.failures++;
+      pipeline.validation='failed';
       releaseResources();return false;
     }
   }
@@ -461,8 +533,9 @@ void main() {
       let backingW=canvas.width,backingH=canvas.height;
       while(backingW<pixelW)backingW*=2;while(backingH<pixelH)backingH*=2;
       if(backingW!==canvas.width||backingH!==canvas.height) {
-        canvas.width=backingW;canvas.height=backingH;stats.resizes++;
+        canvas.width=backingW;canvas.height=backingH;stats.resizes++;invalidatePipeline();
       }
+      const callsBefore=stats.gpuDrawCalls,submitStarted=now();
       gl.useProgram(program);gl.enable(gl.SCISSOR_TEST);
       gl.viewport(0,canvas.height-pixelH,pixelW,pixelH);gl.scissor(0,canvas.height-pixelH,pixelW,pixelH);
       gl.colorMask(true,true,true,true);gl.depthMask(true);gl.stencilMask(255);
@@ -483,9 +556,17 @@ void main() {
       gl.uniform2f(uniforms.uThresholds,thresholds[0],thresholds[1]);
       if(outline) pass(snapshot,options,1,outline);
       pass(snapshot,options,0,0);drawStains(snapshot,options);gl.bindVertexArray(null);gl.depthMask(true);
+      stats.lastGpuDrawCalls=stats.gpuDrawCalls-callsBefore;stats.lastSubmitMs=now()-submitStarted;
+      // Transparent snapshots (including alpha below RGBA8 precision) can
+      // legitimately be empty. Wait for a visible selection before checking.
+      if(pipeline.validation==='pending'&&snapshot.parts.some(part=>meshes[part.mesh]&&selected(part,options)&&
+          validMatrix(part.matrix)&&normalMatrix(part.matrix)&&(!Number.isFinite(part.alpha)||part.alpha>=1/255)))
+        validatePipeline(pixelW,pixelH);
       // Immediate copy is required: another actor/part can reuse this canvas in
       // the same frame, including an offscreen p5.Graphics corpse stamp.
+      const copyStarted=now();
       context.drawImage(canvas,0,0,pixelW,pixelH,x,y,w,h);
+      stats.lastCopyMs=now()-copyStarted;
       // Retain this draw's camera for Canvas attachments. Canonical sockets,
       // pose joints and simulation coordinates remain in their original frame.
       snapshot.renderView=view.enabled?view:null;
@@ -496,6 +577,9 @@ void main() {
       return true;
     } catch(error) {
       failure=String(error&&error.message||error);stats.failures++;
+      // Silent WebGL/transfer failures are persistent for this generation.
+      // Stop submitting invisible actors and let the existing native pose run.
+      if(pipeline.validation==='pending'){failed=true;pipeline.validation='failed';}
       if(gl&&gl.isContextLost())lost=true;
       return false;
     }
@@ -509,6 +593,7 @@ void main() {
       canvas.removeEventListener('webglcontextrestored',contextRestored,false);
     }
     canvas=null;gl=null;source=null;lost=false;failed=false;failure='';
+    transferCanvas=null;transferContext=null;validationPixels=null;invalidatePipeline();
   }
   return api;
 })();
