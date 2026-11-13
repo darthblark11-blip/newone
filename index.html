@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>Stick City</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #111; }
+    canvas { display: block; touch-action: none; }
+    #graphics-report { position: fixed; z-index: 10000; top: 12px; right: 12px;
+      width: min(420px, calc(100vw - 48px)); max-height: calc(100dvh - 48px); overflow: auto;
+      padding: 12px; border: 1px solid #627c85; border-radius: 8px; color: #e8f0ef;
+      background: #142026f5; font: 14px/1.45 system-ui, sans-serif; touch-action: auto; }
+    #graphics-report h1 { margin: 0 0 8px; font-size: 18px; }
+    #graphics-report h2 { margin: 14px 0 4px; font-size: 14px; }
+    #graphics-report p { margin: 6px 0; }
+    #graphics-report button, #graphics-report a { display: inline-block; padding: 7px 9px;
+      margin: 4px 4px 0 0; border: 1px solid #78949a; border-radius: 4px; color: #e8f0ef;
+      background: #263d46; font: inherit; text-decoration: none; cursor: pointer; }
+    #graphics-report pre { font: 11px/1.4 monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+    #graphics-report .muted { color: #afc4c8; }
+    #graphics-report [hidden] { display: none !important; }
+    #graphics-open { position: fixed; top: 12px; right: 12px; z-index: 10000; padding: 8px 12px;
+      border: 1px solid #78949a; border-radius: 5px; background: #142026; color: #e8f0ef;
+      font: 14px system-ui, sans-serif; cursor: pointer; }
+  </style>
+  <!-- Keep your existing local p5 path here if you already bundle p5 offline. -->
+  <script defer src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+  <script defer src="game.js"></script>
+  <!-- Optional troubleshooting only: open index.html?graphics=1. -->
+  <script defer src="graphics-report.js"></script>
+</head>
+<body></body>
+</html>

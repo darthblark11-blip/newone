@@ -58798,10 +58798,95 @@ const GLRIG_SCALES = [1.0, 0.78, 0.6];
 // A quarter of the pixels for the same picture.
 const GLRIG_LIGHT_SCALE = 0.5;
 
+// Report the contexts the game actually uses. Creating a probe canvas can
+// choose another GPU or exhaust Android's small WebGL context allowance.
+// Driver strings are sampled once per context generation, never per frame.
+const _gameGraphicsContexts = new WeakMap();
+const _gameGraphicsEmptyContexts = Object.create(null);
+function gameGraphicsEmptyContext(state) {
+  if(!_gameGraphicsEmptyContexts[state])_gameGraphicsEmptyContexts[state]=Object.freeze({
+    state,requestedPowerPreference:'high-performance',contextAttributes:null,
+    vendor:null,renderer:null,version:null,shadingLanguageVersion:null,
+    unmaskedVendor:null,unmaskedRenderer:null,backend:'unknown',acceleration:'unknown'
+  });
+  return _gameGraphicsEmptyContexts[state];
+}
+function gameGraphicsForgetContext(gl) {
+  if(gl&&(typeof gl==='object'||typeof gl==='function'))_gameGraphicsContexts.delete(gl);
+}
+function gameGraphicsContextInfo(gl,stateOverride=null) {
+  if(!gl)return gameGraphicsEmptyContext(stateOverride==='unavailable'?'unavailable':'not-created');
+  if(typeof gl!=='object'&&typeof gl!=='function')return gameGraphicsEmptyContext('unavailable');
+  if(stateOverride==='lost'||stateOverride==='unavailable'){
+    const value=gameGraphicsEmptyContext(stateOverride);_gameGraphicsContexts.set(gl,value);return value;
+  }
+  const cached=_gameGraphicsContexts.get(gl);if(cached)return cached;
+  if(typeof gl.getParameter!=='function'){
+    const value=gameGraphicsEmptyContext('unavailable');_gameGraphicsContexts.set(gl,value);return value;
+  }
+  const safe=fn=>{try{return fn();}catch(_){return null;}};
+  if(typeof gl.isContextLost==='function'&&safe(()=>gl.isContextLost())===true){
+    const value=gameGraphicsEmptyContext('lost');_gameGraphicsContexts.set(gl,value);return value;
+  }
+  const parameter=key=>{
+    if(key===undefined||key===null)return null;
+    const value=safe(()=>gl.getParameter(key));return typeof value==='string'&&value.length?value:null;
+  };
+  const rawAttributes=typeof gl.getContextAttributes==='function'?safe(()=>gl.getContextAttributes()):null;
+  let attributes=null;
+  if(rawAttributes){
+    attributes={};
+    for(const key of ['alpha','depth','stencil','antialias','premultipliedAlpha','preserveDrawingBuffer',
+      'powerPreference','failIfMajorPerformanceCaveat','desynchronized','xrCompatible']){
+      const value=safe(()=>rawAttributes[key]);
+      if(typeof value==='string'||typeof value==='boolean')attributes[key]=value;
+    }
+    Object.freeze(attributes);
+  }
+  const extension=typeof gl.getExtension==='function'?safe(()=>gl.getExtension('WEBGL_debug_renderer_info')):null;
+  const result={state:'ready',requestedPowerPreference:'high-performance',contextAttributes:attributes,
+    vendor:parameter(gl.VENDOR),renderer:parameter(gl.RENDERER),version:parameter(gl.VERSION),
+    shadingLanguageVersion:parameter(gl.SHADING_LANGUAGE_VERSION),
+    unmaskedVendor:extension?parameter(extension.UNMASKED_VENDOR_WEBGL):null,
+    unmaskedRenderer:extension?parameter(extension.UNMASKED_RENDERER_WEBGL):null,
+    backend:'unknown',acceleration:'unknown'};
+  // Vulkan is also a SwiftShader backend. Test explicit software evidence
+  // before treating any renderer name as reported hardware acceleration.
+  const renderer=[result.unmaskedRenderer,result.renderer].filter(Boolean).join(' '),
+    identity=[renderer,result.unmaskedVendor,result.vendor].filter(Boolean).join(' ');
+  if(/\bvulkan\b/i.test(renderer))result.backend='vulkan';
+  else if(/\bmetal\b/i.test(renderer))result.backend='metal';
+  else if(/\b(?:direct3d|d3d)(?:9|11|12)?\b/i.test(renderer))result.backend='d3d';
+  else if(/\bopengl(?:\s+es)?\b/i.test(renderer))result.backend='opengl';
+  if(/swiftshader|llvmpipe|lavapipe|softpipe|software[\s_-]*(?:rasterizer|renderer|adapter)|microsoft basic render driver|\bwarp\b/i.test(identity))
+    result.acceleration='software';
+  else if(result.unmaskedRenderer&&
+      /adreno|mali|powervr|apple|nvidia|geforce|radeon|\bamd\b|intel|qualcomm|\barm\b|samsung|xclipse|vivante|tegra|asahi|broadcom|videocore|panfrost|\biris\b/i.test(identity))
+    result.acceleration='hardware-reported';
+  const frozen=Object.freeze(result);_gameGraphicsContexts.set(gl,frozen);return frozen;
+}
+function getGameGraphicsDiagnostics() {
+  const safe=fn=>{try{return fn();}catch(_){return null;}};
+  const userAgent=safe(()=>navigator.userAgent)||null;
+  const characters=typeof Player3D!=='undefined'&&Player3D?Player3D:null;
+  const characterDetails=characters&&typeof characters.getDiagnostics==='function'?safe(()=>characters.getDiagnostics()):null;
+  return {
+    environment:{userAgent,isSecureContext:typeof isSecureContext==='boolean'?isSecureContext:null,
+      url:safe(()=>location.href)||null,
+      androidWebViewHint:typeof userAgent==='string'&&/Android/i.test(userAgent)?/\bwv\b|\bVersion\/4\.0.*\b(?:Chrome|Chromium)\//i.test(userAgent):null},
+    lighting:{enabled:!!GLRig.on,ready:!!GLRig.ok,failure:GLRig.failure||'',
+      context:gameGraphicsContextInfo(GLRig.gl,GLRig.contextState)},
+    characters:{enabled:!!(characters&&characters.enabled),ready:!!(characters&&characters.ready),
+      failure:characters&&characters.failure||'',
+      context:characterDetails&&characterDetails.context||gameGraphicsContextInfo(characters&&characters.gl)}
+  };
+}
+
 const GLRig = {
   ok: false,          // context exists and every program linked
   on: false,          // ok, and not stood down by the watchdog
   gl: null,
+  contextState: 'not-created',
   canvas: null,       // offscreen; never enters the DOM
   host: null,         // p5's canvas element
   prog: {},
@@ -59237,6 +59322,7 @@ function glRigTarget(gl, w, h, filter) {
 function glRigInit() {
   if (GLRig.ok) return true;
   GLRig.failure = '';
+  GLRig.contextState = 'unavailable';
   try {
     if (typeof document === 'undefined' || !document.createElement) return false;
     const host = (typeof drawingContext !== 'undefined' && drawingContext)
@@ -59261,11 +59347,15 @@ function glRigInit() {
     });
     // The headless harness stubs getContext() with a bare object, so probe for
     // something only a real context has before touching anything else.
-    if (!gl || typeof gl.createProgram !== 'function') return false;
+    if (!gl || typeof gl.createProgram !== 'function') {
+      GLRig.failure = 'WebGL2 is unavailable for world lighting';return false;
+    }
 
     GLRig.canvas = cv;
     GLRig.host = host;
     GLRig.gl = gl;
+    GLRig.contextState = 'ready';
+    gameGraphicsContextInfo(gl);
 
     GLRig.prog.normal = glRigProgram(gl, GLRIG_FS_NORMAL, 'normal');
     GLRig.prog.sun    = glRigProgram(gl, GLRIG_FS_SUN, 'sun');
@@ -59309,10 +59399,12 @@ function glRigInit() {
     // Stand down cleanly and let the 2D rig carry the frame.
     cv.addEventListener('webglcontextlost', (e) => {
       e.preventDefault();
+      gameGraphicsForgetContext(gl);GLRig.contextState = 'lost';
       GLRig.ok = false; GLRig.on = false;
       GLRig.failure = 'context lost';
     }, false);
     cv.addEventListener('webglcontextrestored', () => {
+      gameGraphicsForgetContext(gl);GLRig.contextState = 'not-created';
       GLRig.ok = false;
       GLRig.prog = {}; GLRig.tex = {}; GLRig.fbo = {};
       GLRig.w = GLRig.h = 0;
@@ -68030,6 +68122,7 @@ void main() {
     get failure(){return failure;}, get ready(){return !!program&&!lost&&!failed;},
     getDiagnostics(){return {enabled:api.enabled,ready:api.ready,failure,generation,
       width:canvas?canvas.width:0,height:canvas?canvas.height:0,...stats,
+      context:typeof gameGraphicsContextInfo==='function'?gameGraphicsContextInfo(gl,lost?'lost':failed&&!gl?'unavailable':null):null,
       view:lastView?{...lastView}:{enabled:false},
       lighting:{sunWeight:lighting.sunWeight,localWeight:lighting.localWeight,
         contrast:lighting.contrast,direction:Array.from(lighting.direction),localSources:lighting.localSources}};} };
@@ -68173,6 +68266,7 @@ void main() {
 
   function contextLost(event) {
     event.preventDefault();lost=true;stats.contextLosses++;
+    if(typeof gameGraphicsForgetContext==='function')gameGraphicsForgetContext(gl);
     failure='Player WebGL context lost; native rendering remains available';
     // Lost WebGL handles cannot be reused after restoration.
     meshes=Object.create(null);program=null;uniforms=null;
@@ -68180,6 +68274,7 @@ void main() {
 
   function contextRestored() {
     lost=false;failed=false;failure='';stats.contextRestores++;
+    if(typeof gameGraphicsForgetContext==='function')gameGraphicsForgetContext(gl);
     // Rebuild lazily when the next player is actually visible.
   }
 
@@ -68201,8 +68296,9 @@ void main() {
       }
       if(!gl) gl=canvas.getContext('webgl2',{alpha:true,depth:true,stencil:true,
         antialias:true,premultipliedAlpha:true,preserveDrawingBuffer:true,
-        powerPreference:'low-power',failIfMajorPerformanceCaveat:false});
+        powerPreference:'high-performance',failIfMajorPerformanceCaveat:false});
       if(!gl) throw Error('WebGL2 is unavailable for the player renderer');
+      if(typeof gameGraphicsContextInfo==='function')gameGraphicsContextInfo(gl);
       const vertex=shader(gl.VERTEX_SHADER,vertexSource),fragment=shader(gl.FRAGMENT_SHADER,fragmentSource);
       program=gl.createProgram();gl.attachShader(program,vertex);gl.attachShader(program,fragment);
       gl.linkProgram(program);gl.deleteShader(vertex);gl.deleteShader(fragment);
@@ -68461,6 +68557,7 @@ void main() {
 
   function dispose() {
     releaseResources();
+    if(typeof gameGraphicsForgetContext==='function')gameGraphicsForgetContext(gl);
     if(canvas) {
       canvas.removeEventListener('webglcontextlost',contextLost,false);
       canvas.removeEventListener('webglcontextrestored',contextRestored,false);

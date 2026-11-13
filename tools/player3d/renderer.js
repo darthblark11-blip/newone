@@ -68,6 +68,7 @@ void main() {
     get failure(){return failure;}, get ready(){return !!program&&!lost&&!failed;},
     getDiagnostics(){return {enabled:api.enabled,ready:api.ready,failure,generation,
       width:canvas?canvas.width:0,height:canvas?canvas.height:0,...stats,
+      context:typeof gameGraphicsContextInfo==='function'?gameGraphicsContextInfo(gl,lost?'lost':failed&&!gl?'unavailable':null):null,
       view:lastView?{...lastView}:{enabled:false},
       lighting:{sunWeight:lighting.sunWeight,localWeight:lighting.localWeight,
         contrast:lighting.contrast,direction:Array.from(lighting.direction),localSources:lighting.localSources}};} };
@@ -211,6 +212,7 @@ void main() {
 
   function contextLost(event) {
     event.preventDefault();lost=true;stats.contextLosses++;
+    if(typeof gameGraphicsForgetContext==='function')gameGraphicsForgetContext(gl);
     failure='Player WebGL context lost; native rendering remains available';
     // Lost WebGL handles cannot be reused after restoration.
     meshes=Object.create(null);program=null;uniforms=null;
@@ -218,6 +220,7 @@ void main() {
 
   function contextRestored() {
     lost=false;failed=false;failure='';stats.contextRestores++;
+    if(typeof gameGraphicsForgetContext==='function')gameGraphicsForgetContext(gl);
     // Rebuild lazily when the next player is actually visible.
   }
 
@@ -239,8 +242,9 @@ void main() {
       }
       if(!gl) gl=canvas.getContext('webgl2',{alpha:true,depth:true,stencil:true,
         antialias:true,premultipliedAlpha:true,preserveDrawingBuffer:true,
-        powerPreference:'low-power',failIfMajorPerformanceCaveat:false});
+        powerPreference:'high-performance',failIfMajorPerformanceCaveat:false});
       if(!gl) throw Error('WebGL2 is unavailable for the player renderer');
+      if(typeof gameGraphicsContextInfo==='function')gameGraphicsContextInfo(gl);
       const vertex=shader(gl.VERTEX_SHADER,vertexSource),fragment=shader(gl.FRAGMENT_SHADER,fragmentSource);
       program=gl.createProgram();gl.attachShader(program,vertex);gl.attachShader(program,fragment);
       gl.linkProgram(program);gl.deleteShader(vertex);gl.deleteShader(fragment);
@@ -499,6 +503,7 @@ void main() {
 
   function dispose() {
     releaseResources();
+    if(typeof gameGraphicsForgetContext==='function')gameGraphicsForgetContext(gl);
     if(canvas) {
       canvas.removeEventListener('webglcontextlost',contextLost,false);
       canvas.removeEventListener('webglcontextrestored',contextRestored,false);
