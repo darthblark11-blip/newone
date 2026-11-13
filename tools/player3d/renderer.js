@@ -11,14 +11,20 @@ uniform mat4 uModel;
 uniform mat3 uNormal;
 uniform vec4 uBounds;
 uniform vec2 uDepth;
+uniform vec4 uView;
 uniform float uOutline;
 out vec3 vNormal;
 void main() {
   vec3 n = normalize(uNormal * aNormal);
   vec3 p = (uModel * vec4(aPosition, 1.0)).xyz + n * uOutline;
-  gl_Position = vec4((p.x-uBounds.x)*uBounds.z*2.0-1.0,
-    1.0-(p.y-uBounds.y)*uBounds.w*2.0,
-    1.0-(p.z-uDepth.x)*uDepth.y*2.0, 1.0);
+  float h = (p.z-uView.w)*uView.z;
+  float w = 1.0-h;
+  vec2 numerator = p.xy+uView.xy*h;
+  vec2 crop = (numerator-uBounds.xy*w)*uBounds.zw;
+  float t = (p.z-uDepth.x)*uDepth.y;
+  float wFar = 1.0-(uDepth.x-uView.w)*uView.z;
+  float wNear = 1.0-(uDepth.x+1.0/uDepth.y-uView.w)*uView.z;
+  gl_Position = vec4(crop.x*2.0-w,w-crop.y*2.0,mix(wFar,-wNear,t),w);
   vNormal = n;
 }`;
   const fragmentSource = `#version 300 es
@@ -42,11 +48,13 @@ void main() {
 }`;
   const stats = { draws:0, meshUploads:0, triangles:0, gpuDrawCalls:0,
     contextLosses:0, contextRestores:0, resizes:0, failures:0,
-    bufferCreates:0, programCreates:0, stainDraws:0, lastDrawMs:0, totalDrawMs:0 };
+    bufferCreates:0, programCreates:0, stainDraws:0, perspectiveDraws:0, lastDrawMs:0, totalDrawMs:0 };
   const normal = new Float32Array(9), color = new Float32Array(3);
   const stainMatrix=new Float32Array([0,0,1,0,1,0,0,0,0,1,0,0,0,0,0,1]);
   const emptyOptions={}, defaultBands=[.48,.78,1.06], defaultThresholds=[.32,.72], defaultColor=[.65,.65,.68];
   const bounds = new Float64Array(6);
+  const projectedPoint={x:0,y:0,z:0,w:1};
+  let lastView=null;
   let canvas = null, gl = null, program = null, uniforms = null;
   let meshes = Object.create(null), source = null, failure = '', failed = false;
   let lost = false, generation = 0;
@@ -55,10 +63,12 @@ void main() {
   const now = () => typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
   const api = { enabled:true, maxSize:1024, stats, ensure, draw, validateAsset, dispose,
     sampleLighting,
+    projectPoint(snapshot,point,out){return Player3DView.project(point,snapshot&&snapshot.renderView,out);},
     get canvas(){return canvas;}, get gl(){return gl;},
     get failure(){return failure;}, get ready(){return !!program&&!lost&&!failed;},
     getDiagnostics(){return {enabled:api.enabled,ready:api.ready,failure,generation,
       width:canvas?canvas.width:0,height:canvas?canvas.height:0,...stats,
+      view:lastView?{...lastView}:{enabled:false},
       lighting:{sunWeight:lighting.sunWeight,localWeight:lighting.localWeight,
         contrast:lighting.contrast,direction:Array.from(lighting.direction),localSources:lighting.localSources}};} };
 
@@ -236,7 +246,7 @@ void main() {
       gl.linkProgram(program);gl.deleteShader(vertex);gl.deleteShader(fragment);
       if(!gl.getProgramParameter(program,gl.LINK_STATUS)) throw Error(gl.getProgramInfoLog(program)||'Player shader link failed');
       stats.programCreates++;uniforms={};
-      for(const name of ['uModel','uNormal','uBounds','uDepth','uOutline','uLight','uColor','uBands','uThresholds','uShadeContrast','uInk','uAlpha'])
+      for(const name of ['uModel','uNormal','uBounds','uDepth','uView','uOutline','uLight','uColor','uBands','uThresholds','uShadeContrast','uInk','uAlpha'])
         uniforms[name]=gl.getUniformLocation(program,name);
       for(const name of Object.keys(asset.meshes)) {
         const mesh=asset.meshes[name],vao=gl.createVertexArray(),buffers=[];
@@ -312,6 +322,21 @@ void main() {
       count++;
     }
     return count;
+  }
+
+  // Positive-w pinhole maps attain each coordinate extremum at a box corner.
+  // Project an outline-expanded world box so no elevated face is cropped when
+  // the actor moves into a screen corner. Its Z range remains camera depth.
+  function projectBounds(view,outline) {
+    if(!view.enabled)return;
+    const x0=bounds[0]-outline,y0=bounds[1]-outline,z0=bounds[2]-outline;
+    const x1=bounds[3]+outline,y1=bounds[4]+outline,z1=bounds[5]+outline;
+    bounds[0]=bounds[1]=Infinity;bounds[3]=bounds[4]=-Infinity;
+    for(let corner=0;corner<8;corner++){
+      const p=Player3DView.projectXYZ(corner&1?x1:x0,corner&2?y1:y0,corner&4?z1:z0,view,projectedPoint);
+      bounds[0]=Math.min(bounds[0],p.x);bounds[1]=Math.min(bounds[1],p.y);
+      bounds[3]=Math.max(bounds[3],p.x);bounds[4]=Math.max(bounds[4],p.y);
+    }
   }
 
   function groupColor(part,mesh,group) {
@@ -421,6 +446,9 @@ void main() {
       const quality=Number.isFinite(options.resolutionScale)?Math.max(.25,options.resolutionScale):1;
       const scale=Math.max(.1,sx,sy),outline=options.outline===false?0:Math.min(.55,Math.max(.12,.85/scale));
       const pad=outline+1;
+      const view=Player3DView.resolve(context,options,bounds[5]+pad);
+      const minZ=bounds[2]-pad,maxZ=bounds[5]+pad;
+      projectBounds(view,outline);
       const x=bounds[0]-pad,y=bounds[1]-pad,w=Math.max(.1,bounds[3]-bounds[0]+pad*2),h=Math.max(.1,bounds[4]-bounds[1]+pad*2);
       const limit=Math.max(32,Math.min(2048,api.maxSize||1024));
       const pixelW=Math.max(16,Math.min(limit,Math.ceil(w*sx*quality))),pixelH=Math.max(16,Math.min(limit,Math.ceil(h*sy*quality)));
@@ -441,8 +469,8 @@ void main() {
       gl.blendFuncSeparate(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
       gl.disable(gl.STENCIL_TEST);gl.disable(gl.POLYGON_OFFSET_FILL);
       gl.uniform4f(uniforms.uBounds,x,y,1/w,1/h);
-      const minZ=bounds[2]-pad,maxZ=bounds[5]+pad;
       gl.uniform2f(uniforms.uDepth,minZ,1/Math.max(.1,maxZ-minZ));
+      gl.uniform4f(uniforms.uView,view.offsetX,view.offsetY,view.invH,view.pivotZ);
       const light=sampleLighting(snapshot,transform,options.lighting);
       gl.uniform3fv(uniforms.uLight,light.direction);
       gl.uniform1f(uniforms.uShadeContrast,light.contrast);
@@ -454,6 +482,12 @@ void main() {
       // Immediate copy is required: another actor/part can reuse this canvas in
       // the same frame, including an offscreen p5.Graphics corpse stamp.
       context.drawImage(canvas,0,0,pixelW,pixelH,x,y,w,h);
+      // Retain this draw's camera for Canvas attachments. Canonical sockets,
+      // pose joints and simulation coordinates remain in their original frame.
+      snapshot.renderView=view.enabled?view:null;
+      const sockets=snapshot.sockets||emptyOptions,projected=snapshot.projectedSockets||(snapshot.projectedSockets={});
+      for(const name of Object.keys(sockets))projected[name]=Player3DView.project(sockets[name],view,projected[name]);
+      lastView=snapshot.renderView;if(view.enabled)stats.perspectiveDraws++;
       stats.draws++;stats.lastDrawMs=now()-started;stats.totalDrawMs+=stats.lastDrawMs;
       return true;
     } catch(error) {

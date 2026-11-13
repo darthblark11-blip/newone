@@ -3,7 +3,7 @@
 The player and ordinary hostile human enemies use an articulated 3D mesh
 rendered through WebGL2 at the game's existing Canvas actor slots. Player
 corpses use the same model; enemy corpses keep their native painter. The
-overhead camera, world ordering, controls, simulation, saves, and
+overhead framing, world ordering, controls, simulation, saves, and
 OpenProcessing entry point remain in place.
 `Player3D.enabled = false` selects the complete native player painter for
 comparison. Unsupported or lost WebGL contexts use that same fallback.
@@ -35,6 +35,15 @@ and attachment sockets without advancing animation time or requiring a GPU.
 XY uses the existing actor-local world axes; Z is height. Native gameplay
 queries remain the reference for weapon origins and contact positions. A
 renderer call never updates the simulation.
+
+Living player and human enemy meshes now use a finite camera sampled from the
+actual main Canvas transform and viewport center. An unchanged world facing
+shows different side/front/back surfaces as an actor moves toward an edge or
+corner. Zoom, camera movement, shake, actor scale, and pixel density share the
+same projection rule. Mesh bounds, depth, outlines, wounds, attachments, and
+projectile presentation follow that camera; raw joints and gameplay coordinates
+remain authoritative. Direct asset previews and corpse Graphics remain
+orthographic by default. See [the camera implementation and validation](player3d-camera.md).
 
 The head mesh is spherical with no ears or projecting nose. It keeps the small
 surface facial marks, uses uniform XYZ scale in living and corpse poses, and is
@@ -138,6 +147,10 @@ node tools/check-player3d-head.js
 node tools/check-player3d-head-corpses.js
 node tools/check-player3d-helmets.js
 node tools/check-player3d-helmets-browser.cjs
+node tools/check-player3d-view.js
+node tools/check-player3d-view-dispatch.js
+node tools/check-player3d-projectile-view.js
+node tools/check-player3d-view-browser.cjs
 node tools/check-player3d-lighting.cjs
 node tools/check-player3d-fidelity.js
 node tools/check-player3d-support-hand.js

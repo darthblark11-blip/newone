@@ -20,7 +20,7 @@ def main():
     asset = json.loads((ROOT / 'assets/player/player-mesh.json').read_text())
     if asset.get('schemaVersion') != 1 or not asset.get('meshes'):
         raise SystemExit('Unsupported or empty player asset')
-    sources = ['pose.js', 'renderer.js', 'corpse.js']
+    sources = ['view.js', 'pose.js', 'renderer.js', 'corpse.js']
     chunks = [BEGIN, '// Generated source; edit the Blender model/exporter and tools/player3d modules.',
               'const PLAYER3D_ASSET = ' + json.dumps(asset, separators=(',', ':'), ensure_ascii=True) + ';']
     for source in sources:

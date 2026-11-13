@@ -1,6 +1,6 @@
 // Player anatomy in real XYZ. X/Y are the game's ground plane, Z is height.
-// The orthographic mesh camera drops Z: native contact and muzzle XY remain
-// authoritative while the height/IK solve gives the model volume and depth.
+// Native contact and muzzle XY remain authoritative while the height/IK solve
+// gives the model volume. Living rendering resolves its finite camera later.
 // No animation clocks, random numbers or mutable game state live in this file.
 const PLAYER3D_HEAD_SCALE = 1;
 const Player3DMath = (() => {
@@ -713,7 +713,8 @@ function player3DPose(actor, options = {}) {
   return {parts,sockets,projectedSockets,bounds:[minx,miny,maxx,maxy],kind,identity,stains,pose:p,palette,worldOrigin};
 }
 
-// Renderer and gameplay adapters use the same fixed orthographic projection.
+// Canonical pose queries retain native XY. Living draws replace projectedSockets
+// with presentation coordinates through Player3DView, without changing sockets.
 function player3DProjectPoint(p, origin = null) {
   return {x:(Number(p&&p.x)||0)+(Number(origin&&origin.x)||0), y:(Number(p&&p.y)||0)+(Number(origin&&origin.y)||0), z:Number(p&&p.z)||0};
 }
