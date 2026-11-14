@@ -1,0 +1,41 @@
+{
+  "baselineCommit": "f23032945970cf7939f94f8a05ed6c20a6ef9a5c",
+  "sourceSha256": "bd36049aab9c7a587f4f2b2c9fd57f336d74b45be6de54db2382b3056dc32eb7",
+  "fixture": {
+    "guards": 100,
+    "frames": 60,
+    "kind": "real Character updates, shared stealth, ordinary pistol gunners"
+  },
+  "before": {
+    "perceptionCalls": 4643,
+    "coverRays": 4716,
+    "aimElevationCalls": 6000,
+    "projectiles": 73,
+    "activeCap": 24
+  },
+  "after": {
+    "perceptionCalls": 1000,
+    "coverRays": 1016,
+    "aimElevationCalls": 1032,
+    "projectiles": 16,
+    "activeCap": 8
+  },
+  "simultaneousReadyGuns": {
+    "enabledShots": 8,
+    "disabledShots": 100
+  },
+  "validation": {
+    "frontlineChecks": 65,
+    "acquisitionChecks": 16,
+    "alternateAttackChecks": 46,
+    "commitmentLifecycleChecks": 18,
+    "crossSectorPolicyChecks": 128,
+    "protectedAIParityChecks": 1220,
+    "nativeCoverChecks": 104,
+    "browserCounterMatchesNativeHarness": true,
+    "mobileBrowserScenes": 7,
+    "browserErrors": []
+  },
+  "timingLimit": "Sequential cloud Chromium software-rendering measurements did not establish an overall CPU or FPS improvement. Empty-world AI has small admission overhead; the dense 160-prop scene was approximately unchanged. Physical-device FPS was not measured.",
+  "reproduce": "node tools/check-hostile-acquisition-budget.js; node tools/check-hostile-frontline.js"
+}

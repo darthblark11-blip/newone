@@ -1,0 +1,523 @@
+{
+  "createdAt": "2026-11-08T10:12:52.904Z",
+  "sourceSha256": "da237d4b6477d2733937b3822420373b2bab4e75ddd94b48021d4c1824afc3eb",
+  "p5Sha256": "726ac96626b93f5bcaff83a910b6c60d3a9728f063e0eb73b5d0819ffc356915",
+  "renderer": "Chromium SwiftShader; physical-device performance unmeasured",
+  "behavior": {
+    "levels": [
+      {
+        "level": 1,
+        "noContract": true,
+        "eligible": true,
+        "awayCone": false,
+        "frontCone": true,
+        "curiosity": [
+          {
+            "atMs": 50,
+            "phase": "PATROL",
+            "suspicion": 0,
+            "nativeState": "PATROL"
+          },
+          {
+            "atMs": 100,
+            "phase": "CURIOUS",
+            "suspicion": 0.10844849454761657,
+            "nativeState": "CURIOUS"
+          },
+          {
+            "atMs": 500,
+            "phase": "INVESTIGATE",
+            "suspicion": 0.5422424727380828,
+            "nativeState": "INVESTIGATE"
+          },
+          {
+            "atMs": 1000,
+            "phase": "ALERT",
+            "suspicion": 1,
+            "nativeState": "CHASE"
+          }
+        ],
+        "lostSight": {
+          "lastSeen": {
+            "x": 5620,
+            "y": -3600
+          },
+          "hiddenPlayer": {
+            "x": 5750,
+            "y": -3440
+          },
+          "phases": [
+            {
+              "afterMs": 50,
+              "phase": "ALERT",
+              "visible": true,
+              "goalX": 5620,
+              "goalY": -3600
+            },
+            {
+              "afterMs": 2250,
+              "phase": "SEARCH",
+              "visible": false,
+              "goalX": 5620,
+              "goalY": -3600
+            },
+            {
+              "afterMs": 8800,
+              "phase": "PATROL",
+              "visible": false,
+              "goalX": 5620,
+              "goalY": -3600
+            }
+          ]
+        },
+        "crouchHidden": true,
+        "proneHidden": true,
+        "standingExposed": true,
+        "edgeExposed": true,
+        "lowDuckHidden": true,
+        "lowPopExposed": true
+      },
+      {
+        "level": 3,
+        "noContract": true,
+        "eligible": true,
+        "awayCone": false,
+        "frontCone": true,
+        "curiosity": [
+          {
+            "atMs": 50,
+            "phase": "CURIOUS",
+            "suspicion": 0.10844849454761657,
+            "nativeState": "CURIOUS"
+          },
+          {
+            "atMs": 450,
+            "phase": "INVESTIGATE",
+            "suspicion": 0.5422424727380828,
+            "nativeState": "INVESTIGATE"
+          },
+          {
+            "atMs": 950,
+            "phase": "ALERT",
+            "suspicion": 1,
+            "nativeState": "CHASE"
+          }
+        ],
+        "lostSight": {
+          "lastSeen": {
+            "x": 5620,
+            "y": -3600
+          },
+          "hiddenPlayer": {
+            "x": 5750,
+            "y": -3440
+          },
+          "phases": [
+            {
+              "afterMs": 50,
+              "phase": "ALERT",
+              "visible": true,
+              "goalX": 5620,
+              "goalY": -3600
+            },
+            {
+              "afterMs": 2250,
+              "phase": "SEARCH",
+              "visible": false,
+              "goalX": 5620,
+              "goalY": -3600
+            },
+            {
+              "afterMs": 8800,
+              "phase": "PATROL",
+              "visible": false,
+              "goalX": 5620,
+              "goalY": -3600
+            }
+          ]
+        },
+        "crouchHidden": true,
+        "proneHidden": true,
+        "standingExposed": true,
+        "edgeExposed": true,
+        "lowDuckHidden": true,
+        "lowPopExposed": true
+      }
+    ],
+    "silent": [
+      {
+        "name": "idle",
+        "radius": 0
+      },
+      {
+        "name": "walk",
+        "radius": 0
+      },
+      {
+        "name": "jog",
+        "radius": 0
+      },
+      {
+        "name": "released run",
+        "radius": 0
+      },
+      {
+        "name": "crouch",
+        "radius": 0
+      },
+      {
+        "name": "prone",
+        "radius": 0
+      }
+    ],
+    "exceptions": {
+      "regular": true,
+      "ally": false,
+      "neutral": false,
+      "robot": false,
+      "scriptedAmbush": false,
+      "nonPlayerCombat": false,
+      "cutscene": false
+    },
+    "hearing": {
+      "phase": "CURIOUS",
+      "visible": false,
+      "suspicion": 0.18,
+      "goalX": 5674,
+      "goalY": -3600,
+      "event": {
+        "id": 1,
+        "x": 5674,
+        "y": -3600,
+        "radius": 313.6,
+        "kind": "RUN",
+        "at": 450
+      }
+    },
+    "materialRadii": {
+      "EARTH": 280,
+      "TIMBER": 378,
+      "STONE": 313.6
+    },
+    "highCoverHidden": true,
+    "highCoverPeek": {
+      "valid": true,
+      "exposed": true,
+      "rootStillBlocked": true
+    },
+    "dayIllumination": 1,
+    "nightIllumination": 0.18,
+    "sunlitIllumination": 1,
+    "shadowIllumination": 0.5918575277870335
+  },
+  "scenes": [
+    {
+      "width": 320,
+      "height": 568,
+      "stage": "ACTIVE",
+      "killed": 2,
+      "layout": {
+        "bounty": {
+          "x": 92,
+          "y": 82,
+          "w": 216,
+          "h": 26
+        },
+        "stealth": {
+          "x": 92,
+          "y": 112,
+          "w": 216,
+          "h": 22
+        },
+        "hasBounty": true,
+        "prompt": {
+          "x": 45,
+          "y": 443,
+          "w": 230,
+          "h": 46
+        }
+      },
+      "clockBounds": {
+        "left": 260.7796630859375,
+        "right": 308
+      },
+      "toast": "",
+      "toastTicks": 0,
+      "stackBefore": 0,
+      "stackAfter": 0,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "fault": null,
+      "screenshot": "bounty-progress-320x568.png"
+    },
+    {
+      "width": 320,
+      "height": 568,
+      "stage": "READY",
+      "killed": 5,
+      "layout": {
+        "bounty": {
+          "x": 92,
+          "y": 82,
+          "w": 216,
+          "h": 26
+        },
+        "stealth": {
+          "x": 92,
+          "y": 112,
+          "w": 216,
+          "h": 22
+        },
+        "hasBounty": true,
+        "prompt": {
+          "x": 45,
+          "y": 443,
+          "w": 230,
+          "h": 46
+        }
+      },
+      "clockBounds": {
+        "left": 260.7796630859375,
+        "right": 308
+      },
+      "toast": "",
+      "toastTicks": 0,
+      "stackBefore": 0,
+      "stackAfter": 0,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "fault": null,
+      "screenshot": "bounty-ready-320x568.png"
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "stage": "ACTIVE",
+      "killed": 2,
+      "layout": {
+        "bounty": {
+          "x": 126,
+          "y": 82,
+          "w": 252,
+          "h": 26
+        },
+        "stealth": {
+          "x": 126,
+          "y": 112,
+          "w": 252,
+          "h": 22
+        },
+        "hasBounty": true,
+        "prompt": {
+          "x": 80,
+          "y": 719,
+          "w": 230,
+          "h": 46
+        }
+      },
+      "clockBounds": {
+        "left": 272.7796630859375,
+        "right": 320
+      },
+      "toast": "",
+      "toastTicks": 0,
+      "stackBefore": 0,
+      "stackAfter": 0,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "fault": null,
+      "screenshot": "bounty-progress-390x844.png"
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "stage": "READY",
+      "killed": 5,
+      "layout": {
+        "bounty": {
+          "x": 126,
+          "y": 82,
+          "w": 252,
+          "h": 26
+        },
+        "stealth": {
+          "x": 126,
+          "y": 112,
+          "w": 252,
+          "h": 22
+        },
+        "hasBounty": true,
+        "prompt": {
+          "x": 80,
+          "y": 719,
+          "w": 230,
+          "h": 46
+        }
+      },
+      "clockBounds": {
+        "left": 272.7796630859375,
+        "right": 320
+      },
+      "toast": "",
+      "toastTicks": 0,
+      "stackBefore": 0,
+      "stackAfter": 0,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "fault": null,
+      "screenshot": "bounty-ready-390x844.png"
+    },
+    {
+      "width": 844,
+      "height": 390,
+      "stage": "ACTIVE",
+      "killed": 2,
+      "layout": {
+        "bounty": {
+          "x": 296,
+          "y": 82,
+          "w": 252,
+          "h": 26
+        },
+        "stealth": {
+          "x": 296,
+          "y": 112,
+          "w": 252,
+          "h": 22
+        },
+        "hasBounty": true,
+        "prompt": {
+          "x": 307,
+          "y": 265,
+          "w": 230,
+          "h": 46
+        }
+      },
+      "clockBounds": {
+        "left": 726.7796630859375,
+        "right": 774
+      },
+      "toast": "",
+      "toastTicks": 0,
+      "stackBefore": 0,
+      "stackAfter": 0,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "fault": null,
+      "screenshot": "bounty-progress-844x390.png"
+    },
+    {
+      "width": 844,
+      "height": 390,
+      "stage": "READY",
+      "killed": 5,
+      "layout": {
+        "bounty": {
+          "x": 296,
+          "y": 82,
+          "w": 252,
+          "h": 26
+        },
+        "stealth": {
+          "x": 296,
+          "y": 112,
+          "w": 252,
+          "h": 22
+        },
+        "hasBounty": true,
+        "prompt": {
+          "x": 307,
+          "y": 265,
+          "w": 230,
+          "h": 46
+        }
+      },
+      "clockBounds": {
+        "left": 726.7796630859375,
+        "right": 774
+      },
+      "toast": "",
+      "toastTicks": 0,
+      "stackBefore": 0,
+      "stackAfter": 0,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "fault": null,
+      "screenshot": "bounty-ready-844x390.png"
+    },
+    {
+      "width": 844,
+      "height": 390,
+      "level": 1,
+      "exploration": true,
+      "guardEligible": true,
+      "phase": "CURIOUS",
+      "suspicion": 0.22912797585053774,
+      "hud": {
+        "frame": 569,
+        "level": 1,
+        "visible": 1,
+        "relevant": true,
+        "suspicion": 0.11825960043898721,
+        "phase": "CURIOUS"
+      },
+      "layout": {
+        "bounty": {
+          "x": 296,
+          "y": 82,
+          "w": 252,
+          "h": 26
+        },
+        "stealth": {
+          "x": 296,
+          "y": 82,
+          "w": 252,
+          "h": 22
+        },
+        "hasBounty": false,
+        "prompt": {
+          "x": 307,
+          "y": 265,
+          "w": 230,
+          "h": 46
+        }
+      },
+      "stackBefore": 0,
+      "stackAfter": 0,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "fault": null,
+      "screenshot": "ordinary-enemy-stealth-city.png"
+    }
+  ],
+  "errors": [],
+  "rendererWarnings": []
+}

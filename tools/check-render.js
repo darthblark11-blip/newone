@@ -10,6 +10,7 @@ probe('seedWorldClock();');
 // so the sun-driven shadow helpers are exercised at both ends of their range.
 // ---------------------------------------------------------------------------
 const seen = new Set();
+let timberBodies = 0, timberVisualsMatch = true;
 // Every streamed sector, not only the two authored ones. The outer sectors grew
 // sub-biomes with their own set pieces, and a prop that no test ever draws is a
 // prop nobody finds out is broken until they walk into it a kilometre from the
@@ -24,7 +25,14 @@ for (const b of [1, 2, 3, 4, 5, 6, 7]) {
   const R = b === 2 ? 13 : b >= 3 ? 12 : 8;
   for (let cx = -R; cx <= R; cx++) for (let cy = -R; cy <= R; cy++) {
     const ch = P(`generateChunkContent(${b}, ${cx}, ${cy})`);
-    for (const s of ch.solid) { all.push(s); if (s.propType) seen.add(s.propType); }
+    for (const s of ch.solid) {
+      all.push(s); if (s.propType) seen.add(s.propType);
+      if (s.propType === 'FOREST_TIMBER') {
+        timberBodies++;
+        if (!s.isForestTimber || ch.decor.filter(d => d.forestSolidKey === s.chunkKey &&
+            d.forestLiveProp && d.forestSpecies === s.forestSpecies).length !== 1) timberVisualsMatch = false;
+      }
+    }
   }
   ctx.__all = all;
   probe('buildings = window.__all; activeBuildings = window.__all;');
@@ -43,6 +51,8 @@ for (const b of [1, 2, 3, 4, 5, 6, 7]) {
   }
 }
 console.log('   prop types drawn: ' + Array.from(seen).sort().join(' '));
+ok('each timber collision companion has exactly one live visible body',
+   timberBodies > 0 && timberVisualsMatch, timberBodies + ' linked bodies');
 
 // ---------------------------------------------------------------------------
 // AND THE LIVE PASS ACTUALLY READS THE SUN.
@@ -76,7 +86,8 @@ console.log('\n== the live pass reads the travelling sun ==');
 }
 
 // Every propType the generators emit must have a branch in drawBiomeProps,
-// otherwise it is a solid with no art -- an invisible wall.
+// otherwise it is a solid with no art -- an invisible wall. Timber companions
+// use linked live decor, whose exact one-to-one association is checked above.
 const src = require('fs').readFileSync(process.env.GAME_JS || __dirname + '/../game.js','utf8');
 const cases = new Set();
 // drawBiomeProps dispatches on a switch; drawBiomeDecks on an if-chain, because
@@ -89,8 +100,8 @@ for (const m of src.split('function drawBiomeDecks')[1].split(/\n}\n/)[0].matchA
 }
 const invisible = Array.from(seen).filter(t => !cases.has(t));
 console.log('   deliberately invisible (collision only): ' + invisible.join(' '));
-ok('the only art-less props are the water volumes',
-   invisible.every(t => t === 'RIVER' || t === 'CANAL'), invisible.join(','));
+ok('only water and linked timber collision companions omit prop-pass art',
+   invisible.every(t => t === 'RIVER' || t === 'CANAL' || t === 'FOREST_TIMBER'), invisible.join(','));
 
 // ---------------------------------------------------------------------------
 // Hybrid sector: an authored core in the middle, streamed chunks around it.

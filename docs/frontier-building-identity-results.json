@@ -1,0 +1,618 @@
+{
+  "reports": [
+    {
+      "createdAt": "2026-11-07T11:16:54.964Z",
+      "sourcePath": "/workspace/newone/game.js",
+      "sourceSha256": "27e8ee76d760574d9ef5d2ff92505c3ade014ada26bb9a08f8ee61510aa2181a",
+      "p5Sha256": "726ac96626b93f5bcaff83a910b6c60d3a9728f063e0eb73b5d0819ffc356915",
+      "renderer": "Chromium SwiftShader; physical-device performance unmeasured",
+      "cases": [
+        {
+          "scene": "church-close",
+          "viewport": "panorama",
+          "mode": "fallback",
+          "placed": {
+            "x": 1225,
+            "y": -155,
+            "elevation": 58,
+            "zoom": 1.4,
+            "hour": 13,
+            "target": {
+              "name": "CHURCH",
+              "x": 1000,
+              "y": -180,
+              "w": 185,
+              "h": 175,
+              "arch": "CHAPEL",
+              "design": {
+                "id": "drygulch:1000:-180:CHURCH",
+                "purpose": "MISSION",
+                "role": "CHURCH",
+                "roof": "CHAPEL",
+                "material": "TIMBER",
+                "variant": 2189041613,
+                "primary": true
+              }
+            }
+          },
+          "screenshot": "panorama-fallback-church-close.png",
+          "cpuDrawMs": {
+            "count": 2,
+            "median": 11.5,
+            "p95": 11.5,
+            "p99": 11.5,
+            "max": 11.5
+          },
+          "stackBefore": 0,
+          "stackAfter": 0,
+          "level": 3,
+          "biome": 3,
+          "cameraFinal": {
+            "x": 809.9286886679704,
+            "y": -460.6900189545594,
+            "zoom": 1.4,
+            "hour": 13.000096666666668
+          },
+          "density": 1,
+          "actors": 116,
+          "solids": 127,
+          "canvases": 42,
+          "chunks": 34,
+          "retiredTextures": 5,
+          "gl": {
+            "ok": true,
+            "on": false,
+            "tier": 0,
+            "error": 0,
+            "failure": "",
+            "w": 1200,
+            "h": 850
+          },
+          "fault": null,
+          "architecturalLandmarks": [],
+          "errors": [],
+          "consoleErrors": []
+        },
+        {
+          "scene": "saloon",
+          "viewport": "panorama",
+          "mode": "fallback",
+          "placed": {
+            "x": 1300,
+            "y": -1730,
+            "elevation": 0,
+            "zoom": 0.8,
+            "hour": 13,
+            "target": {
+              "name": "COPPER SPUR SALOON",
+              "x": 940,
+              "y": -1730,
+              "w": 350,
+              "h": 235,
+              "arch": "SALOON",
+              "design": {
+                "id": "drygulch:940:-1730:COPPER SPUR SALOON",
+                "purpose": "SALOON",
+                "role": "SALOON",
+                "roof": "SALOON",
+                "material": "TIMBER",
+                "variant": 2457144949,
+                "primary": true
+              }
+            }
+          },
+          "screenshot": "panorama-fallback-saloon.png",
+          "cpuDrawMs": {
+            "count": 2,
+            "median": 11.899999999965075,
+            "p95": 11.899999999965075,
+            "p99": 11.899999999965075,
+            "max": 11.899999999965075
+          },
+          "stackBefore": 0,
+          "stackAfter": 0,
+          "level": 3,
+          "biome": 3,
+          "cameraFinal": {
+            "x": 550,
+            "y": -2261.25,
+            "zoom": 0.8,
+            "hour": 13.000085833333333
+          },
+          "density": 1,
+          "actors": 118,
+          "solids": 154,
+          "canvases": 42,
+          "chunks": 34,
+          "retiredTextures": 5,
+          "gl": {
+            "ok": true,
+            "on": false,
+            "tier": 0,
+            "error": 0,
+            "failure": "",
+            "w": 1200,
+            "h": 850
+          },
+          "fault": null,
+          "architecturalLandmarks": [
+            {
+              "name": "MINE HEAD",
+              "x": 780,
+              "y": -2900,
+              "arch": "HEADFRAME",
+              "design": {
+                "id": "drygulch:780:-2900:MINE HEAD",
+                "purpose": "MINE",
+                "role": "MINE",
+                "roof": "HEADFRAME",
+                "material": "TIMBER",
+                "variant": 2876112695,
+                "primary": true
+              },
+              "maxRoofHeight": 81
+            }
+          ],
+          "errors": [],
+          "consoleErrors": []
+        },
+        {
+          "scene": "bank",
+          "viewport": "panorama",
+          "mode": "fallback",
+          "placed": {
+            "x": 1350,
+            "y": -1730,
+            "elevation": 0,
+            "zoom": 0.8,
+            "hour": 13,
+            "target": {
+              "name": "BANK",
+              "x": 1590,
+              "y": -1730,
+              "w": 195,
+              "h": 130,
+              "arch": "STONE",
+              "design": {
+                "id": "drygulch:1590:-1730:BANK",
+                "purpose": "BANK",
+                "role": "BANK",
+                "roof": "STONE",
+                "material": "STONE",
+                "variant": 3395972848,
+                "primary": true
+              }
+            }
+          },
+          "screenshot": "panorama-fallback-bank.png",
+          "cpuDrawMs": {
+            "count": 2,
+            "median": 8.5,
+            "p95": 8.5,
+            "p99": 8.5,
+            "max": 8.5
+          },
+          "stackBefore": 0,
+          "stackAfter": 0,
+          "level": 3,
+          "biome": 3,
+          "cameraFinal": {
+            "x": 600,
+            "y": -2261.25,
+            "zoom": 0.8,
+            "hour": 13.000070833333334
+          },
+          "density": 1,
+          "actors": 118,
+          "solids": 154,
+          "canvases": 42,
+          "chunks": 34,
+          "retiredTextures": 5,
+          "gl": {
+            "ok": true,
+            "on": false,
+            "tier": 0,
+            "error": 0,
+            "failure": "",
+            "w": 1200,
+            "h": 850
+          },
+          "fault": null,
+          "architecturalLandmarks": [
+            {
+              "name": "MINE HEAD",
+              "x": 780,
+              "y": -2900,
+              "arch": "HEADFRAME",
+              "design": {
+                "id": "drygulch:780:-2900:MINE HEAD",
+                "purpose": "MINE",
+                "role": "MINE",
+                "roof": "HEADFRAME",
+                "material": "TIMBER",
+                "variant": 2876112695,
+                "primary": true
+              },
+              "maxRoofHeight": 81
+            }
+          ],
+          "errors": [],
+          "consoleErrors": []
+        },
+        {
+          "scene": "mission",
+          "viewport": "panorama",
+          "mode": "fallback",
+          "placed": {
+            "x": 8180,
+            "y": -6600,
+            "elevation": 0,
+            "zoom": 0.8,
+            "hour": 13,
+            "target": {
+              "name": "SUNSPUR MISSION",
+              "x": 8174,
+              "y": -6885,
+              "w": 326,
+              "h": 198,
+              "arch": "CHAPEL",
+              "design": {
+                "id": "SUNSPUR:shop-1",
+                "purpose": "MISSION",
+                "role": "CHURCH",
+                "roof": "CHAPEL",
+                "material": "TIMBER",
+                "variant": 645698575,
+                "primary": true
+              }
+            }
+          },
+          "screenshot": "panorama-fallback-mission.png",
+          "cpuDrawMs": {
+            "count": 2,
+            "median": 6.900000000023283,
+            "p95": 6.900000000023283,
+            "p99": 6.900000000023283,
+            "max": 6.900000000023283
+          },
+          "stackBefore": 0,
+          "stackAfter": 0,
+          "level": 3,
+          "biome": 3,
+          "cameraFinal": {
+            "x": 7430,
+            "y": -7131.25,
+            "zoom": 0.8,
+            "hour": 13.00006
+          },
+          "density": 1,
+          "actors": 166,
+          "solids": 96,
+          "canvases": 44,
+          "chunks": 27,
+          "retiredTextures": 14,
+          "gl": {
+            "ok": true,
+            "on": false,
+            "tier": 0,
+            "error": 0,
+            "failure": "",
+            "w": 1200,
+            "h": 850
+          },
+          "fault": null,
+          "architecturalLandmarks": [],
+          "errors": [],
+          "consoleErrors": []
+        }
+      ]
+    },
+    {
+      "createdAt": "2026-11-07T11:18:36.732Z",
+      "sourcePath": "/workspace/newone/game.js",
+      "sourceSha256": "27e8ee76d760574d9ef5d2ff92505c3ade014ada26bb9a08f8ee61510aa2181a",
+      "p5Sha256": "726ac96626b93f5bcaff83a910b6c60d3a9728f063e0eb73b5d0819ffc356915",
+      "renderer": "Chromium SwiftShader; physical-device performance unmeasured",
+      "cases": [
+        {
+          "scene": "church-close",
+          "viewport": "panorama",
+          "mode": "advanced",
+          "placed": {
+            "x": 1225,
+            "y": -155,
+            "elevation": 58,
+            "zoom": 1.4,
+            "hour": 13,
+            "target": {
+              "name": "CHURCH",
+              "x": 1000,
+              "y": -180,
+              "w": 185,
+              "h": 175,
+              "arch": "CHAPEL",
+              "design": {
+                "id": "drygulch:1000:-180:CHURCH",
+                "purpose": "MISSION",
+                "role": "CHURCH",
+                "roof": "CHAPEL",
+                "material": "TIMBER",
+                "variant": 2189041613,
+                "primary": true
+              }
+            }
+          },
+          "screenshot": "panorama-advanced-church-close.png",
+          "cpuDrawMs": {
+            "count": 2,
+            "median": 21.400000000023283,
+            "p95": 21.400000000023283,
+            "p99": 21.400000000023283,
+            "max": 21.400000000023283
+          },
+          "stackBefore": 0,
+          "stackAfter": 0,
+          "level": 3,
+          "biome": 3,
+          "cameraFinal": {
+            "x": 809.9286886679704,
+            "y": -460.6900189545594,
+            "zoom": 1.4,
+            "hour": 13.000084166666667
+          },
+          "density": 1,
+          "actors": 116,
+          "solids": 127,
+          "canvases": 42,
+          "chunks": 34,
+          "retiredTextures": 5,
+          "gl": {
+            "ok": true,
+            "on": true,
+            "tier": 0,
+            "error": 0,
+            "failure": "",
+            "w": 1200,
+            "h": 850
+          },
+          "fault": null,
+          "architecturalLandmarks": [],
+          "errors": [],
+          "consoleErrors": []
+        },
+        {
+          "scene": "saloon",
+          "viewport": "panorama",
+          "mode": "advanced",
+          "placed": {
+            "x": 1300,
+            "y": -1730,
+            "elevation": 0,
+            "zoom": 0.8,
+            "hour": 13,
+            "target": {
+              "name": "COPPER SPUR SALOON",
+              "x": 940,
+              "y": -1730,
+              "w": 350,
+              "h": 235,
+              "arch": "SALOON",
+              "design": {
+                "id": "drygulch:940:-1730:COPPER SPUR SALOON",
+                "purpose": "SALOON",
+                "role": "SALOON",
+                "roof": "SALOON",
+                "material": "TIMBER",
+                "variant": 2457144949,
+                "primary": true
+              }
+            }
+          },
+          "screenshot": "panorama-advanced-saloon.png",
+          "cpuDrawMs": {
+            "count": 2,
+            "median": 15.399999999965075,
+            "p95": 15.399999999965075,
+            "p99": 15.399999999965075,
+            "max": 15.399999999965075
+          },
+          "stackBefore": 0,
+          "stackAfter": 0,
+          "level": 3,
+          "biome": 3,
+          "cameraFinal": {
+            "x": 550,
+            "y": -2261.25,
+            "zoom": 0.8,
+            "hour": 13.0001275
+          },
+          "density": 1,
+          "actors": 118,
+          "solids": 154,
+          "canvases": 42,
+          "chunks": 34,
+          "retiredTextures": 5,
+          "gl": {
+            "ok": true,
+            "on": true,
+            "tier": 0,
+            "error": 0,
+            "failure": "",
+            "w": 1200,
+            "h": 850
+          },
+          "fault": null,
+          "architecturalLandmarks": [
+            {
+              "name": "MINE HEAD",
+              "x": 780,
+              "y": -2900,
+              "arch": "HEADFRAME",
+              "design": {
+                "id": "drygulch:780:-2900:MINE HEAD",
+                "purpose": "MINE",
+                "role": "MINE",
+                "roof": "HEADFRAME",
+                "material": "TIMBER",
+                "variant": 2876112695,
+                "primary": true
+              },
+              "maxRoofHeight": 81
+            }
+          ],
+          "errors": [],
+          "consoleErrors": []
+        },
+        {
+          "scene": "depot",
+          "viewport": "panorama",
+          "mode": "advanced",
+          "placed": {
+            "x": 1300,
+            "y": -450,
+            "elevation": 20.416000000000004,
+            "zoom": 0.8,
+            "hour": 13,
+            "target": {
+              "name": "STAGE DEPOT",
+              "x": 1020,
+              "y": -450,
+              "w": 200,
+              "h": 135,
+              "arch": "BARN",
+              "design": {
+                "id": "drygulch:1020:-450:STAGE DEPOT",
+                "purpose": "DEPOT",
+                "role": "DEPOT",
+                "roof": "DEPOT",
+                "material": "TIMBER",
+                "variant": 2749549678,
+                "primary": true
+              }
+            }
+          },
+          "screenshot": "panorama-advanced-depot.png",
+          "cpuDrawMs": {
+            "count": 2,
+            "median": 17.20000000001164,
+            "p95": 17.20000000001164,
+            "p99": 17.20000000001164,
+            "max": 17.20000000001164
+          },
+          "stackBefore": 0,
+          "stackAfter": 0,
+          "level": 3,
+          "biome": 3,
+          "cameraFinal": {
+            "x": 550,
+            "y": -981.25,
+            "zoom": 0.8,
+            "hour": 13.000117500000002
+          },
+          "density": 1,
+          "actors": 118,
+          "solids": 144,
+          "canvases": 42,
+          "chunks": 34,
+          "retiredTextures": 5,
+          "gl": {
+            "ok": true,
+            "on": true,
+            "tier": 0,
+            "error": 0,
+            "failure": "",
+            "w": 1200,
+            "h": 850
+          },
+          "fault": null,
+          "architecturalLandmarks": [],
+          "errors": [],
+          "consoleErrors": []
+        },
+        {
+          "scene": "workshop",
+          "viewport": "panorama",
+          "mode": "advanced",
+          "placed": {
+            "x": 1350,
+            "y": -1470,
+            "elevation": 0,
+            "zoom": 0.8,
+            "hour": 13,
+            "target": {
+              "name": "BLACKSMITH",
+              "x": 1595,
+              "y": -1470,
+              "w": 200,
+              "h": 125,
+              "arch": "BARN",
+              "design": {
+                "id": "drygulch:1595:-1470:BLACKSMITH",
+                "purpose": "WORKSHOP",
+                "role": "BLACKSMITH",
+                "roof": "GAMBREL",
+                "material": "TIMBER",
+                "variant": 3728814990,
+                "primary": true
+              }
+            }
+          },
+          "screenshot": "panorama-advanced-workshop.png",
+          "cpuDrawMs": {
+            "count": 2,
+            "median": 17.20000000001164,
+            "p95": 17.20000000001164,
+            "p99": 17.20000000001164,
+            "max": 17.20000000001164
+          },
+          "stackBefore": 0,
+          "stackAfter": 0,
+          "level": 3,
+          "biome": 3,
+          "cameraFinal": {
+            "x": 600,
+            "y": -2001.25,
+            "zoom": 0.8,
+            "hour": 13.000143333333332
+          },
+          "density": 1,
+          "actors": 118,
+          "solids": 152,
+          "canvases": 42,
+          "chunks": 34,
+          "retiredTextures": 5,
+          "gl": {
+            "ok": true,
+            "on": true,
+            "tier": 0,
+            "error": 0,
+            "failure": "",
+            "w": 1200,
+            "h": 850
+          },
+          "fault": null,
+          "architecturalLandmarks": [
+            {
+              "name": "MINE HEAD",
+              "x": 780,
+              "y": -2900,
+              "arch": "HEADFRAME",
+              "design": {
+                "id": "drygulch:780:-2900:MINE HEAD",
+                "purpose": "MINE",
+                "role": "MINE",
+                "roof": "HEADFRAME",
+                "material": "TIMBER",
+                "variant": 2876112695,
+                "primary": true
+              },
+              "maxRoofHeight": 81
+            }
+          ],
+          "errors": [],
+          "consoleErrors": []
+        }
+      ]
+    }
+  ]
+}

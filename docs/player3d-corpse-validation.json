@@ -1,0 +1,122 @@
+{
+  "cases": [
+    {
+      "dt": 0,
+      "mesh": true
+    },
+    {
+      "dt": 1,
+      "mesh": true
+    },
+    {
+      "dt": 2,
+      "mesh": true
+    },
+    {
+      "dt": 3,
+      "mesh": true
+    },
+    {
+      "dt": 4,
+      "mesh": true
+    },
+    {
+      "dt": 5,
+      "mesh": true
+    },
+    {
+      "dt": 6,
+      "mesh": true
+    },
+    {
+      "dt": 7,
+      "mesh": true
+    },
+    {
+      "dt": 8,
+      "mesh": true
+    },
+    {
+      "dt": 9,
+      "mesh": true
+    },
+    {
+      "dt": 10,
+      "mesh": true
+    },
+    {
+      "dt": 11,
+      "mesh": true
+    },
+    {
+      "dt": 12,
+      "mesh": true
+    },
+    {
+      "dt": 13,
+      "mesh": true
+    },
+    {
+      "dt": 14,
+      "mesh": true
+    },
+    {
+      "dt": 15,
+      "mesh": true
+    },
+    {
+      "dt": 16,
+      "mesh": true
+    },
+    {
+      "dt": 17,
+      "mesh": true
+    },
+    {
+      "dt": 18,
+      "mesh": true
+    },
+    {
+      "dt": 19,
+      "mesh": true
+    },
+    {
+      "dt": 20,
+      "mesh": true
+    }
+  ],
+  "graphicsPixels": 1525,
+  "gpuError": 0,
+  "stats": {
+    "enabled": true,
+    "ready": true,
+    "failure": "",
+    "generation": 1,
+    "width": 128,
+    "height": 128,
+    "draws": 48,
+    "meshUploads": 35,
+    "triangles": 8150,
+    "gpuDrawCalls": 1026,
+    "contextLosses": 0,
+    "contextRestores": 0,
+    "resizes": 1,
+    "failures": 0,
+    "bufferCreates": 105,
+    "programCreates": 1,
+    "stainDraws": 0,
+    "lastDrawMs": 0.19999999925494194,
+    "totalDrawMs": 16.399999998509884,
+    "lighting": {
+      "sunWeight": 0.3687468016729054,
+      "localWeight": 0,
+      "contrast": 0.6704487303143735,
+      "direction": [
+        0.6614027619361877,
+        -0.5171425938606262,
+        0.5432401895523071
+      ],
+      "localSources": 0
+    }
+  }
+}

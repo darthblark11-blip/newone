@@ -1,0 +1,455 @@
+{
+  "baseline": "e2fd618",
+  "sourceSha256": "072a66bab2af9d29e3b7ecbd2f13540dbc910df1d458b426aa678dd436bd1d87",
+  "blenderVersion": "4.3.2",
+  "asset": {
+    "modelCount": 3,
+    "partCount": 119,
+    "faceCount": 311,
+    "maxPlanarityError": 1.58e-06,
+    "maxFacesPerModel": 160,
+    "xyLimit": 0.501,
+    "heightLimit": 18
+  },
+  "modelFaces": {
+    "quay_house": 90,
+    "quay_office": 119,
+    "quay_warehouse": 102
+  },
+  "geometryProjectionChecks": 70427,
+  "quayPropChecks": 1350,
+  "unchangedNativeChunkSignatures": 8,
+  "browser": {
+    "renderer": "Chromium / SwiftShader; physical-phone performance unmeasured",
+    "heightMaterialPixelSamples": 472,
+    "roofAngleComparisons": 18,
+    "transformedTargets": [
+      {
+        "style": 0,
+        "index": 0,
+        "drawn": true,
+        "stamped": true,
+        "opaque": 88727,
+        "maskDelta": 0,
+        "before": [
+          1.5,
+          0,
+          0,
+          1.5,
+          256,
+          256
+        ],
+        "after": [
+          1.5,
+          0,
+          0,
+          1.5,
+          256,
+          256
+        ],
+        "heightAfter": [
+          1.5,
+          0,
+          0,
+          1.5,
+          256,
+          256
+        ]
+      },
+      {
+        "style": 0,
+        "index": 1,
+        "drawn": true,
+        "stamped": true,
+        "opaque": 41125,
+        "maskDelta": 1,
+        "before": [
+          1.100000023841858,
+          0.25,
+          -0.20000000298023224,
+          0.8999999761581421,
+          256,
+          256
+        ],
+        "after": [
+          1.100000023841858,
+          0.25,
+          -0.20000000298023224,
+          0.8999999761581421,
+          256,
+          256
+        ],
+        "heightAfter": [
+          1.100000023841858,
+          0.25,
+          -0.20000000298023224,
+          0.8999999761581421,
+          256,
+          256
+        ]
+      },
+      {
+        "style": 0,
+        "index": 2,
+        "drawn": true,
+        "stamped": true,
+        "opaque": 47616,
+        "maskDelta": 3,
+        "before": [
+          -1.100000023841858,
+          0.20000000298023224,
+          0.30000001192092896,
+          1.399999976158142,
+          256,
+          256
+        ],
+        "after": [
+          -1.100000023841858,
+          0.20000000298023224,
+          0.30000001192092896,
+          1.399999976158142,
+          256,
+          256
+        ],
+        "heightAfter": [
+          -1.100000023841858,
+          0.20000000298023224,
+          0.30000001192092896,
+          1.399999976158142,
+          256,
+          256
+        ]
+      },
+      {
+        "style": 1,
+        "index": 0,
+        "drawn": true,
+        "stamped": true,
+        "opaque": 87328,
+        "maskDelta": 0,
+        "before": [
+          1.5,
+          0,
+          0,
+          1.5,
+          256,
+          256
+        ],
+        "after": [
+          1.5,
+          0,
+          0,
+          1.5,
+          256,
+          256
+        ],
+        "heightAfter": [
+          1.5,
+          0,
+          0,
+          1.5,
+          256,
+          256
+        ]
+      },
+      {
+        "style": 1,
+        "index": 1,
+        "drawn": true,
+        "stamped": true,
+        "opaque": 40469,
+        "maskDelta": 1,
+        "before": [
+          1.100000023841858,
+          0.25,
+          -0.20000000298023224,
+          0.8999999761581421,
+          256,
+          256
+        ],
+        "after": [
+          1.100000023841858,
+          0.25,
+          -0.20000000298023224,
+          0.8999999761581421,
+          256,
+          256
+        ],
+        "heightAfter": [
+          1.100000023841858,
+          0.25,
+          -0.20000000298023224,
+          0.8999999761581421,
+          256,
+          256
+        ]
+      },
+      {
+        "style": 1,
+        "index": 2,
+        "drawn": true,
+        "stamped": true,
+        "opaque": 48014,
+        "maskDelta": 3,
+        "before": [
+          -1.100000023841858,
+          0.20000000298023224,
+          0.30000001192092896,
+          1.399999976158142,
+          256,
+          256
+        ],
+        "after": [
+          -1.100000023841858,
+          0.20000000298023224,
+          0.30000001192092896,
+          1.399999976158142,
+          256,
+          256
+        ],
+        "heightAfter": [
+          -1.100000023841858,
+          0.20000000298023224,
+          0.30000001192092896,
+          1.399999976158142,
+          256,
+          256
+        ]
+      },
+      {
+        "style": 3,
+        "index": 0,
+        "drawn": true,
+        "stamped": true,
+        "opaque": 86219,
+        "maskDelta": 0,
+        "before": [
+          1.5,
+          0,
+          0,
+          1.5,
+          256,
+          256
+        ],
+        "after": [
+          1.5,
+          0,
+          0,
+          1.5,
+          256,
+          256
+        ],
+        "heightAfter": [
+          1.5,
+          0,
+          0,
+          1.5,
+          256,
+          256
+        ]
+      },
+      {
+        "style": 3,
+        "index": 1,
+        "drawn": true,
+        "stamped": true,
+        "opaque": 39964,
+        "maskDelta": 4,
+        "before": [
+          1.100000023841858,
+          0.25,
+          -0.20000000298023224,
+          0.8999999761581421,
+          256,
+          256
+        ],
+        "after": [
+          1.100000023841858,
+          0.25,
+          -0.20000000298023224,
+          0.8999999761581421,
+          256,
+          256
+        ],
+        "heightAfter": [
+          1.100000023841858,
+          0.25,
+          -0.20000000298023224,
+          0.8999999761581421,
+          256,
+          256
+        ]
+      },
+      {
+        "style": 3,
+        "index": 2,
+        "drawn": true,
+        "stamped": true,
+        "opaque": 47598,
+        "maskDelta": 7,
+        "before": [
+          -1.100000023841858,
+          0.20000000298023224,
+          0.30000001192092896,
+          1.399999976158142,
+          256,
+          256
+        ],
+        "after": [
+          -1.100000023841858,
+          0.20000000298023224,
+          0.30000001192092896,
+          1.399999976158142,
+          256,
+          256
+        ],
+        "heightAfter": [
+          -1.100000023841858,
+          0.20000000298023224,
+          0.30000001192092896,
+          1.399999976158142,
+          256,
+          256
+        ]
+      }
+    ],
+    "worldScenes": [
+      {
+        "version": "before",
+        "scene": "canal-day",
+        "webglContexts": 2,
+        "characterPipeline": "verified",
+        "lighting": {
+          "ok": true,
+          "on": true,
+          "error": 0
+        }
+      },
+      {
+        "version": "before",
+        "scene": "canal-evening-angle",
+        "webglContexts": 2,
+        "characterPipeline": "verified",
+        "lighting": {
+          "ok": true,
+          "on": true,
+          "error": 0
+        }
+      },
+      {
+        "version": "before",
+        "scene": "canal-night",
+        "webglContexts": 2,
+        "characterPipeline": "verified",
+        "lighting": {
+          "ok": true,
+          "on": true,
+          "error": 0
+        }
+      },
+      {
+        "version": "after",
+        "scene": "canal-day",
+        "webglContexts": 2,
+        "characterPipeline": "verified",
+        "lighting": {
+          "ok": true,
+          "on": true,
+          "error": 0
+        }
+      },
+      {
+        "version": "after",
+        "scene": "canal-evening-angle",
+        "webglContexts": 2,
+        "characterPipeline": "verified",
+        "lighting": {
+          "ok": true,
+          "on": true,
+          "error": 0
+        }
+      },
+      {
+        "version": "after",
+        "scene": "canal-night",
+        "webglContexts": 2,
+        "characterPipeline": "verified",
+        "lighting": {
+          "ok": true,
+          "on": true,
+          "error": 0
+        }
+      }
+    ],
+    "errors": []
+  },
+  "profileTiming": "Host CPU elapsed milliseconds including Canvas synchronization; not GPU timestamps or physical-phone FPS",
+  "profile": [
+    {
+      "version": "before",
+      "phase": "idle",
+      "buildings": 11,
+      "samples": 25,
+      "roofMs": {
+        "median": 1.300000011920929,
+        "p95": 1.7999999970197678
+      },
+      "heightMs": {
+        "median": 0.20000000298023224,
+        "p95": 0.20000000298023224
+      },
+      "newPaths": null
+    },
+    {
+      "version": "before",
+      "phase": "camera-pan",
+      "buildings": 11,
+      "samples": 25,
+      "roofMs": {
+        "median": 1.5,
+        "p95": 2.5
+      },
+      "heightMs": {
+        "median": 0.20000000298023224,
+        "p95": 0.30000001192092896
+      },
+      "newPaths": null
+    },
+    {
+      "version": "after",
+      "phase": "idle",
+      "buildings": 11,
+      "samples": 25,
+      "roofMs": {
+        "median": 2.7000000029802322,
+        "p95": 4.5999999940395355
+      },
+      "heightMs": {
+        "median": 1.4000000059604645,
+        "p95": 2.2000000029802322
+      },
+      "newPaths": 0
+    },
+    {
+      "version": "after",
+      "phase": "camera-pan",
+      "buildings": 11,
+      "samples": 25,
+      "roofMs": {
+        "median": 2.3999999910593033,
+        "p95": 4.200000002980232
+      },
+      "heightMs": {
+        "median": 1.2999999970197678,
+        "p95": 1.9000000059604645
+      },
+      "newPaths": 0
+    }
+  ],
+  "baselineFailures": [
+    "generation: solid overlap",
+    "generation: FOREST_TIMBER scatter on road/water",
+    "generation: missing clutter art list entry",
+    "district: recreation court -7,18 has one hoop instead of two"
+  ]
+}

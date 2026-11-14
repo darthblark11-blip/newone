@@ -1,0 +1,253 @@
+{
+  "createdAt": "2026-11-08T06:56:58.784Z",
+  "sourceSha256": "8edcbecfea642848eb1e2508e151d83791f24375fb5df24a651d5d36e35c2eff",
+  "p5Sha256": "726ac96626b93f5bcaff83a910b6c60d3a9728f063e0eb73b5d0819ffc356915",
+  "renderer": "Chromium SwiftShader; physical-device performance unmeasured",
+  "setup": {
+    "targets": 5,
+    "supports": 6,
+    "starts": [
+      {
+        "target": 0,
+        "state": "PATROL",
+        "clear": true
+      },
+      {
+        "target": 1,
+        "state": "PATROL",
+        "clear": true
+      },
+      {
+        "target": 2,
+        "state": "PATROL",
+        "clear": true
+      },
+      {
+        "target": 3,
+        "state": "PATROL",
+        "clear": true
+      },
+      {
+        "target": 4,
+        "state": "PATROL",
+        "clear": true
+      },
+      {
+        "support": 0,
+        "state": "PATROL",
+        "clear": true
+      },
+      {
+        "support": 1,
+        "state": "PATROL",
+        "clear": true
+      },
+      {
+        "support": 2,
+        "state": "PATROL",
+        "clear": true
+      },
+      {
+        "support": 3,
+        "state": "PATROL",
+        "clear": true
+      },
+      {
+        "support": 4,
+        "state": "PATROL",
+        "clear": true
+      },
+      {
+        "support": 5,
+        "state": "PATROL",
+        "clear": true
+      }
+    ],
+    "lowCover": 5
+  },
+  "behavior": {
+    "scope": {
+      "redMesa": true,
+      "level1": false,
+      "otherBounty": false
+    },
+    "awayCone": false,
+    "frontCone": true,
+    "silent": [
+      {
+        "name": "idle",
+        "radius": 0
+      },
+      {
+        "name": "walk",
+        "radius": 0
+      },
+      {
+        "name": "jog",
+        "radius": 0
+      },
+      {
+        "name": "released run",
+        "radius": 0
+      },
+      {
+        "name": "crouch",
+        "radius": 0
+      },
+      {
+        "name": "prone",
+        "radius": 0
+      }
+    ],
+    "runningRadius": 280,
+    "runningNoise": [
+      {
+        "id": 1,
+        "x": 5668,
+        "y": -3600,
+        "radius": 280,
+        "kind": "RUN",
+        "at": 450
+      }
+    ],
+    "materialRadii": {
+      "EARTH": 280,
+      "TIMBER": 378,
+      "STONE": 313.6
+    },
+    "hearing": {
+      "phase": "CURIOUS",
+      "visible": false,
+      "suspicion": 0.18,
+      "goalX": 5664,
+      "goalY": -3600,
+      "event": {
+        "id": 1,
+        "x": 5664,
+        "y": -3600,
+        "radius": 280,
+        "kind": "RUN",
+        "at": 450
+      }
+    },
+    "curiosity": [
+      {
+        "atMs": 50,
+        "phase": "CURIOUS",
+        "suspicion": 0.16267274182142485,
+        "state": "CURIOUS"
+      },
+      {
+        "atMs": 450,
+        "phase": "INVESTIGATE",
+        "suspicion": 0.5964667200118912,
+        "state": "INVESTIGATE"
+      },
+      {
+        "atMs": 850,
+        "phase": "ALERT",
+        "suspicion": 1,
+        "state": "CHASE"
+      }
+    ],
+    "lostSight": {
+      "lastSeen": {
+        "x": 5620,
+        "y": -3600
+      },
+      "playerHiddenAt": {
+        "x": 5750,
+        "y": -3440
+      },
+      "phases": [
+        {
+          "afterHideMs": 50,
+          "phase": "ALERT",
+          "visible": true,
+          "goalX": 5620,
+          "goalY": -3600
+        },
+        {
+          "afterHideMs": 2250,
+          "phase": "SEARCH",
+          "visible": false,
+          "goalX": 5620,
+          "goalY": -3600
+        },
+        {
+          "afterHideMs": 8800,
+          "phase": "PATROL",
+          "visible": false,
+          "goalX": 5620,
+          "goalY": -3600
+        }
+      ]
+    },
+    "crouchHidden": true,
+    "proneHidden": true,
+    "standingExposed": true,
+    "aroundEdgeExposed": true,
+    "lowCoverDuckHidden": true,
+    "lowCoverPopExposed": true,
+    "highCoverHidden": true,
+    "highCoverPeek": {
+      "valid": true,
+      "upper": {
+        "x": 0,
+        "y": 21
+      },
+      "exposed": true,
+      "rootStillBlocked": true
+    },
+    "dayIllumination": 1,
+    "nightIllumination": 0.18,
+    "sunlitIllumination": 1,
+    "shadowIllumination": 0.3000126491587656
+  },
+  "scenes": [
+    {
+      "hour": 13,
+      "times": [
+        30.100000000093132,
+        21.700000000186265,
+        42.60000000009313,
+        17.59999999962747
+      ],
+      "stackBefore": 0,
+      "stackAfter": 0,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "fault": null,
+      "targets": 5,
+      "supports": 6,
+      "screenshot": "red-mesa-day.png"
+    },
+    {
+      "hour": 0,
+      "times": [
+        18.799999999813735,
+        32.10000000009313,
+        26.899999999906868,
+        53.10000000009313
+      ],
+      "stackBefore": 0,
+      "stackAfter": 0,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "fault": null,
+      "targets": 5,
+      "supports": 6,
+      "screenshot": "red-mesa-night.png"
+    }
+  ],
+  "errors": [],
+  "rendererWarnings": []
+}

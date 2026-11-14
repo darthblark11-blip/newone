@@ -1,0 +1,181 @@
+{
+  "ready": true,
+  "drawn": true,
+  "opaque": 13705,
+  "woundVisible": true,
+  "flashVisible": true,
+  "outsideClip": 0,
+  "insideClip": 3948,
+  "graphicsDrawn": true,
+  "graphicsPixels": 3749,
+  "cases": [
+    {
+      "name": "Pistol",
+      "used": true
+    },
+    {
+      "name": "Rifle",
+      "used": true
+    },
+    {
+      "name": "Shotgun",
+      "used": true
+    },
+    {
+      "name": "Bow",
+      "used": true
+    },
+    {
+      "name": "Dual SMG",
+      "used": true
+    },
+    {
+      "name": "Crouch",
+      "used": true
+    },
+    {
+      "name": "Prone",
+      "used": true
+    },
+    {
+      "name": "Armor",
+      "used": true
+    },
+    {
+      "name": "Chemist",
+      "used": true
+    },
+    {
+      "name": "Ninja",
+      "used": true
+    },
+    {
+      "name": "Cowboy",
+      "used": true
+    },
+    {
+      "name": "Jetpack",
+      "used": true
+    },
+    {
+      "name": "Boxing",
+      "used": true
+    },
+    {
+      "name": "Sword",
+      "used": true
+    },
+    {
+      "name": "Reload",
+      "used": true
+    },
+    {
+      "name": "Corpse",
+      "used": true
+    }
+  ],
+  "fallback": true,
+  "gpuError": 0,
+  "independent": true,
+  "uploadsBefore": 35,
+  "uploadsAfter": 35,
+  "stats": {
+    "draws": 68,
+    "meshUploads": 35,
+    "triangles": 8150,
+    "gpuDrawCalls": 2895,
+    "contextLosses": 0,
+    "contextRestores": 0,
+    "resizes": 1,
+    "failures": 0,
+    "bufferCreates": 105,
+    "programCreates": 1,
+    "stainDraws": 1,
+    "lastDrawMs": 0.09999999962747097,
+    "totalDrawMs": 62.6999999973923
+  },
+  "cpuMs": {
+    "median": 0.30000000074505806,
+    "p95": 1.900000000372529
+  },
+  "sourceBytes": 5250975,
+  "world": {
+    "meshDraws": 3,
+    "mesh": {
+      "enabled": true,
+      "ready": true,
+      "failure": "",
+      "generation": 1,
+      "width": 128,
+      "height": 128,
+      "draws": 3,
+      "meshUploads": 35,
+      "triangles": 8150,
+      "gpuDrawCalls": 141,
+      "contextLosses": 0,
+      "contextRestores": 0,
+      "resizes": 1,
+      "failures": 0,
+      "bufferCreates": 105,
+      "programCreates": 1,
+      "stainDraws": 0,
+      "lastDrawMs": 0.30000000074505806,
+      "totalDrawMs": 6.099999999627471,
+      "lighting": {
+        "sunWeight": 0.5351936583209546,
+        "localWeight": 0,
+        "contrast": 0.9730793787653719,
+        "direction": [
+          -0.17730486392974854,
+          -0.7670215368270874,
+          0.6166367530822754
+        ],
+        "localSources": 0
+      }
+    },
+    "fault": null,
+    "worldLighting": {
+      "ok": true,
+      "on": true,
+      "failure": ""
+    }
+  },
+  "contextLoss": {
+    "supported": true,
+    "fallback": true,
+    "restored": true
+  },
+  "nodeChecks": {
+    "assetsAndPose": 324,
+    "livingDispatch": 51,
+    "corpseAdapter": 77,
+    "nativePoseFidelity": 6869,
+    "sphericalHead": 258,
+    "corpseLightingLifetime": 23,
+    "supportHandDepthAndPurity": 9639,
+    "rigidJetpackAttachmentAndMotion": 2265
+  },
+  "previousBaseline": {
+    "commit": "6417b57",
+    "existingChecksPassed": [
+      "check-stance-hits.js (142)",
+      "check-boxing-combat.js (49)",
+      "check-player-footwear.js (27)",
+      "check-cover-player-fire.js (31)",
+      "check-frontier-player-knockout.js (32)"
+    ],
+    "existingBaselineFailures": [
+      {
+        "test": "check-depth.js",
+        "reason": "run dispatcher source-pattern assertion",
+        "alsoFailsOnUnchangedHead": true
+      },
+      {
+        "test": "check-standing-fluidity.js",
+        "reason": "shallow backward stop assertion",
+        "alsoFailsOnUnchangedHead": true
+      }
+    ]
+  },
+  "physicalPhonePerformanceMeasured": false
+}

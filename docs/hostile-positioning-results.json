@@ -1,0 +1,80 @@
+{
+  "sourceSha256": "6ac9146fa5c9a3d9f0e29e0342129ceaa5d0d03c506e2b98448b4e163cd08cb4",
+  "checks": 35,
+  "fixture": "64 normal human gunners; actual updateEntities with native body separation and Character updates",
+  "comparison": "Positioning disabled versus enabled, actual native updateEntities, movement and separation",
+  "framesPerRun": 600,
+  "measuredFinalFrames": 240,
+  "baseline": {
+    "frame": 700,
+    "pairs44": 142,
+    "pairs60": 156,
+    "nearestMin": 36.679088972374736,
+    "nearestMedian": 38.3957259840631,
+    "radiusMedian": 166.76986533185644,
+    "radiusMax": 497.83732744000736,
+    "moving": 20,
+    "work": {
+      "moves": 5192,
+      "collision": 167620,
+      "coverRays": 2656
+    },
+    "owners": 8,
+    "positioning": {
+      "frames": 0,
+      "sweeps": 0,
+      "rosterReads": 0,
+      "plans": 0,
+      "collisionChecks": 0,
+      "holds": 0,
+      "moves": 0,
+      "claims": 0,
+      "retries": 0
+    }
+  },
+  "revised": {
+    "frame": 700,
+    "pairs44": 1,
+    "pairs60": 6,
+    "nearestMin": 37.190587936958345,
+    "nearestMedian": 68.98434351633225,
+    "radiusMedian": 307.01870222973736,
+    "radiusMax": 454.7299354782272,
+    "moving": 3,
+    "work": {
+      "moves": 1442,
+      "collision": 24633,
+      "coverRays": 2656
+    },
+    "owners": 8,
+    "positioning": {
+      "frames": 600,
+      "sweeps": 40,
+      "rosterReads": 2560,
+      "plans": 112,
+      "collisionChecks": 1011,
+      "holds": 18187,
+      "moves": 18254,
+      "claims": 64,
+      "retries": 1
+    }
+  },
+  "collisionProbeReduction": 0.8530425963488844,
+  "movementAttemptReduction": 0.7222650231124808,
+  "renderValidation": {
+    "actualMeshDraws": 130,
+    "characterPipeline": {
+      "profile": "single-sample",
+      "validation": "verified",
+      "stage": "ready",
+      "checks": 1,
+      "gpuPixels": 321,
+      "canvasPixels": 321,
+      "glError": null,
+      "validationMs": 180.90000000596046
+    },
+    "errors": []
+  },
+  "scope": "Healthy ground ranged humans pursuing the player; exact-overlap repair also covers aircraft",
+  "performanceLimit": "Controlled simulation work counts, not physical-phone FPS or GPU timings"
+}

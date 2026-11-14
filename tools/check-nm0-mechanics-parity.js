@@ -1,0 +1,184 @@
+// This rendering pass must keep the established mechanics implementation.
+// Source identity guards complement the seeded full-world replay: a selected
+// state fingerprint cannot prove that an unvisited combat branch is unchanged.
+// The separately requested wildlife encounter gate is checked by its own test.
+const assert=require('node:assert/strict');
+const fs=require('node:fs'),vm=require('node:vm');
+const {execFileSync}=require('node:child_process');
+const {createHash}=require('node:crypto');
+const {ctx,probe}=require('./harness');
+const relayChanges=require('./fixtures/level1-relay-mechanics.json').functions;
+const groupChanges=require('./fixtures/nm0-groups20-mechanics.json').functions;
+const baseline=execFileSync('git',['show','37dfd722d2524a1810851ffc62905b3aa1d655a4:game.js'],
+  {cwd:__dirname+'/..',maxBuffer:8e6}).toString();
+const candidate=fs.readFileSync(process.env.GAME_JS||__dirname+'/../game.js','utf8');
+// A fresh lexical scope gives V8 the parsing job, including nested template
+// literals, regexes, class accessors and comments. Platform stubs come from the
+// normal harness; no reference functions are substituted into the candidate.
+const reference={...ctx};reference.window=reference;reference.globalThis=reference;
+vm.createContext(reference);vm.runInContext(baseline,reference,{filename:'mechanics-reference.js'});
+const before=expression=>vm.runInContext(expression,reference);
+let functions=0,methods=0,constants=0,constructors=0;
+// Explicit crowd-fire and batch edits are normalized below. The separately
+// requested Level 1 territory/relay changes have reviewed before/after hashes;
+// they do not exempt other movement, collision, weapon or combat functions.
+const frontlineEdits={
+  maintainOutpostMuster:[
+    ['  for (let i = 0; i < 4 && live < FORT_WAVE_FLOOR && st.musterWaves > 0; i++)',
+     '  const refillBatch = FORT_REFILL_BATCHES[Math.floor(frameCount / FORT_MUSTER_TICK) % FORT_REFILL_BATCHES.length];\n  for (let i = 0; i < refillBatch && live < FORT_WAVE_FLOOR && st.musterWaves > 0; i++)']
+  ],
+  triggerGateAmbush:[
+    ['window.ambushSpawnsRemaining += 100;','window.ambushSpawnsRemaining += 150 - NM0_GATE_COUNTED_INITIAL;'],
+    ['window.ambushSpawnsRemaining = 100;','window.ambushSpawnsRemaining = 150 - NM0_GATE_COUNTED_INITIAL;'],
+    ['i<21;','i<13;',3],['i<2;','i<1;',6],
+    ['// Tag the 50 enemies we just spawned!','// Preserve the gate\'s existing counted contingent at 40% smaller size.'],
+    ['enemiesList.length - 50','enemiesList.length - NM0_GATE_COUNTED_INITIAL']
+  ],
+  updateEnemyCoverAI:[
+    ['if(aiming&&a.fireTimer<=0&&a.reloadTimer<=0&&a.ammo>0) {',
+     'if(aiming&&a.fireTimer<=0&&a.reloadTimer<=0&&a.ammo>0&&hostileFrontlineFireAllowed(a,target)) {'],
+    ['      a.fire(a.aimAngle);','      a.fire(a.aimAngle,null,target);']
+  ],
+  'Character.updateEnemy':[
+    ['if (canSee && dToP < 700 && this.fireTimer <= 0 && this.ammo > 0 && this.reloadTimer <= 0) { \n                    this.fire(iA); ',
+     'if (canSee && dToP < 700 && this.fireTimer <= 0 && this.ammo > 0 && this.reloadTimer <= 0 && hostileFrontlineFireAllowed(this,trg)) {\n                    this.fire(iA,null,trg);'],
+    ['if (canSee && dToP < 400 && this.fireTimer <= 0 && this.ammo > 0 && this.reloadTimer <= 0) { ',
+     'if (canSee && dToP < 400 && this.fireTimer <= 0 && this.ammo > 0 && this.reloadTimer <= 0 && hostileFrontlineFireAllowed(this,trg)) {'],
+    ['                        this.fire(sA); ','                        this.fire(sA,null,trg);']
+  ],
+  'Character.fire':[
+    ['fire(sA, bowShot = null)','fire(sA, bowShot = null, combatTarget = null)'],
+    ['    if(!this.isPlayer&&!coverFireAllowed(this,sA,bowShot))return false;',
+     '    if(!this.isPlayer&&!coverFireAllowed(this,sA,bowShot))return false;\n    if(!hostileFrontlineFireAllowed(this,combatTarget))return false;']
+  ]
+};
+function expectedMechanics(name,source){
+  for(const [oldText,newText,count=1]of frontlineEdits[name]||[]){
+    assert.equal(source.split(oldText).length,count+1,name+' has exactly the authorized edit sites');
+    source=source.split(oldText).join(newText);
+  }
+  return source;
+}
+function sameFunction(name){
+  assert.equal(probe(`typeof ${name}`),'function',name+' exists');
+  sameSource(name,probe(`${name}.toString()`),expectedMechanics(name,before(`${name}.toString()`)));
+  functions++;
+}
+function sameSource(name,actual,expected){
+  const reviewed=relayChanges[name];
+  const hash=source=>createHash('sha256').update(source).digest('hex');
+  const group=groupChanges[name];
+  if(group){
+    if(reviewed){
+      assert.equal(hash(expected),reviewed.previous,name+' reviewed pre-feature source');
+      assert.equal(group.previous,reviewed.current,name+' deployment edit starts at the reviewed relay implementation');
+    }else assert.equal(hash(expected),group.previous,name+' reviewed pre-deployment source');
+    assert.equal(hash(actual),group.current,name+' reviewed twenty-body deployment source: '+group.reason);
+    return;
+  }
+  if(!reviewed){assert.equal(actual,expected,name+' must remain exactly the directional-falls branch implementation');return;}
+  assert.equal(hash(expected),reviewed.previous,name+' reviewed pre-feature source');
+  assert.equal(hash(actual),reviewed.current,name+' reviewed relay source: '+reviewed.reason);
+}
+function namesBetween(start,end){
+  const a=baseline.indexOf(start),b=baseline.indexOf(end,a+start.length);
+  assert.ok(a>=0&&b>a,'baseline mechanics region exists');
+  return [...baseline.slice(a,b).matchAll(/^function (\w+)\(/gm)].map(m=>m[1]);
+}
+function checkDeployments(){
+  for(const name of ['triggerGateAmbush','spawnAmbushReinforcement','triggerOutpostAmbush'])sameFunction(name);
+  // These two deployment helpers were not in the original source-lock roster.
+  // Pin their complete source, including reserve and placement branches.
+  for(const name of ['spawnFortWave','spawnNm0OpeningFlank']){
+    assert.equal(createHash('sha256').update(probe(`${name}.toString()`)).digest('hex'),
+      groupChanges[name].current,name+' reviewed deployment helper source');functions++;
+  }
+  for(const [name,value]of Object.entries({NM0_ACTIVE_GROUP:20,NM0_TOWER_INITIAL:20,
+    NM0_GATE_COUNTED_INITIAL:20,NM0_GREY_INITIAL:20,FORT_MUSTER_SPAWN:20,
+    FORT_MUSTER_TOTAL:150,FORT_MUSTER_WAVES:130,FORT_WAVE_FLOOR:6,FORT_MUSTER_TICK:24,
+    NM0_REINFORCEMENT_AERIAL_CHANCE:.05,NM0_RESTORE_AERIAL_SHARE:.04})){
+    assert.equal(probe(name),value,name+' reviewed deployment setting');constants++;
+  }
+}
+if(process.argv.includes('--deployments-only')){
+  checkDeployments();
+  console.log(`PASS NM0 deployment source lock: ${functions} reviewed functions and ${constants} exact settings; prior relay source chains intact. Full mechanics parity is a separate check.`);
+  process.exit(0);
+}
+const guarded=new Set([
+  ...namesBetween('function actorCanUseStances(','const SPATIAL_CELL_SIZE'),
+  ...namesBetween('function shovelCellKey(','function resourceCount('),
+  ...namesBetween('function combatAimElevation(','class Character {'),
+  ...namesBetween('function projectileBuckets(','function drawPlayerAimLaser('),
+  'setPlayerAimZone','playerAimTarget','togglePlayerHeadAim',
+  'distSq','cellKey','buildSpatialBuckets','querySpatialBuckets','getSpatialKey',
+  'buildColIndex','colNear','invalidateColIndex','newCrowdSolidIndex',
+  'invalidateCrowdSolids','clearCrowdSolidIndex','rebuildCrowdSolidIndex',
+  'ensureCrowdSolidIndex','crowdSolidCandidates','crowdSolidOrder',
+  'crowdNearbyBarrels','crowdNearbyCars','updateActiveWorld','hasLOS',
+  'patrolCornerX','patrolCornerY','getPatrolBuilding','steerAvoid',
+  'elevSpeedFactor','waterBodies','waterDepthAt','spawnBullet','spawnOrb',
+  'updateBullets','forestShotCover','legShotRangeForWeapon',
+  'buildHumanLegHitGeometry','humanLegHitGeometry','mapHitDecalHeight','mapLegHitDecal',
+  'resolveSurvivingSwordHit','stanceBodyPose','legInjuryBodyPose','stanceWeaponMount',
+  'stanceLocalPoint','stanceSupportMount','stancePointInBody','stanceMuzzleWorld',
+  'updateGrenades','updateOrbs','triggerExplosion','processKill','buildPushBuckets',
+  'updateEntities','updateWorldBoxingPlayer','updateWorldBoxingOpponents','advanceStun',
+  'triggerGateAmbush','spawnSingleEnemy','spawnAmbushReinforcement','checkAmbushCleared',
+  'triggerOutpostAmbush','conscriptIntoMuster','maintainOutpostMuster',
+  'gateIsOpen','recordSectorGateBreach','recordSouthGateBreached','outpostFortState',
+  'activeFortMuster','startingFortressOwned','sectorTowersAreDown','checkShovelPassiveRoute',
+  // Existing animals still collide and react with precisely their original
+  // mechanics; only the new-encounter scheduling exception is allowed.
+  'wildlifeActorBlocked','wildlifeBodyMetric','wildlifeBodySweep','wildlifeSolidAnimal',
+  'wildlifeHumanContact','wildlifeHumanBlocks','wildlifeCanStand','wildlifeBrain',
+  'wildlifeSenseHumans','wildlifeRebuildGrid','notifyForestWildlifeThreat'
+]);
+for(const name of guarded)if(!name.startsWith('draw')&&!groupChanges[name])sameFunction(name);
+checkDeployments();
+
+// Lock all non-render methods, including accessors and uncommon weapon paths.
+// Constructor bodies are checked separately because a class constructor's
+// Function#toString includes its rendering methods too.
+for(const className of ['Character','Bullet','Orb','Grenade','Molotov','PlayerGrenade']){
+  const oldDescriptors=before(`Object.getOwnPropertyDescriptors(${className}.prototype)`);
+  const newDescriptors=probe(`Object.getOwnPropertyDescriptors(${className}.prototype)`);
+  assert.deepEqual(Object.keys(newDescriptors).sort(),Object.keys(oldDescriptors).sort(),className+' method roster');
+  for(const [name,oldDescriptor]of Object.entries(oldDescriptors)){
+    if(name==='constructor'||name==='show')continue;
+    for(const kind of ['value','get','set'])if(typeof oldDescriptor[kind]==='function'){
+      sameSource(className+'.'+name,String(newDescriptors[name][kind]),expectedMechanics(className+'.'+name,String(oldDescriptor[kind])));
+      methods++;
+    }
+  }
+  // Every constructor here is followed by a getter or ordinary first method.
+  const next=className==='Character'?'get ammo\\(\\)':className==='Bullet'?'get active\\(\\)':
+    className==='Orb'?'init\\(':'update\\(\\)';
+  const extract=source=>{
+    const start=source.indexOf('class '+className+' {'),match=source.slice(start).match(new RegExp('\\n\\s*'+next));
+    const end=match?start+match.index:-1;
+    assert.ok(start>=0&&end>start,className+' constructor markers');return source.slice(start,end);
+  };
+  assert.equal(extract(candidate),extract(baseline),className+' constructor mechanics');constructors++;
+}
+
+const scalarConstants=['STANCE_HOLD_MS','PRONE_DIVE_MS','PRONE_DIVE_DISTANCE','PRONE_DIVE_LEVEL_MS',
+  'LEG_INJURY_CHANCE','LEG_INJURY_RECOVER_MS','LEG_INJURY_COOLDOWN_MS','LEG_INJURY_DOWNED_MS',
+  'LEG_INJURY_SUPINE_MS','LEG_INJURY_SIT_UP_MS','ENEMY_COVER_DIVE_MS','ENEMY_COVER_DIVE_DISTANCE',
+  'COVER_FOOT_MARGIN','COVER_LEAN_MAX','COVER_NEAR_DISTANCE','SPATIAL_CELL_SIZE','COL_CELL','COL_PAD',
+  'CROWD_SOLID_CELL','ENEMY_BULLET_SPEED','PLAYER_BULLET_SPEED','LEG_SHOT_DAMAGE_SCALE','ALLY_COMMAND_SPEED',
+  'SHOVEL_MANTLE_MS','ROBOT_HEAD_HP','ROBOT_CHARGE','ROBOT_BEAM_DMG','ROBOT_BURST','ROBOT_BURST_GAP',
+  'ROBOT_COOLDOWN','ROBOT_FUSE','ROBOT_OIL_AT','ROBOT_BLAST_R','ROBOT_MELEE_KB','GAIT_EASE','GAIT_FULL'];
+const tableConstants=['COMBAT_STANCES','STANDING_STANCE_POSE','LEG_INJURY_OUTCOMES',
+  'LEG_INJURY_SEATED_BODY','LEG_INJURY_SEATED_LEGS','COLLISION_COVER','ENEMY_SHOT_REACTIONS',
+  'STANCE_PROJECTILE_PROFILES','LEG_SHOT_RANGES','WEAPONS','SHOVEL','SHOVEL_DIG_ANIM'];
+for(const name of [...scalarConstants,...tableConstants]){
+  const expression=`JSON.stringify(${name},(key,value)=>typeof value==='number'&&!Number.isFinite(value)?String(value):value)`;
+  assert.equal(probe(expression),before(expression),name+' gameplay values');constants++;
+}
+for(const name of ['ENEMY_COVER_WEAPONS','SHOVEL_AIRBORNE_TYPES']){
+  const expression=`JSON.stringify(Array.from(${name},value=>value&&value.name||value))`;
+  assert.equal(probe(expression),before(expression),name+' eligibility set');constants++;
+}
+assert.ok(!candidate.includes('const STANCE_EXCLUDED_TYPES'),'the previous stance shortcut is removed');
+console.log(`PASS mechanics source lock: ${functions} functions, ${methods} methods/accessors, ${constructors} constructors and ${constants} tuning tables/constants match 37dfd72 with authorized frontline gates, ambush sizing, ${Object.keys(relayChanges).length} reviewed territory/relay/gate-isolation changes and ${Object.keys(groupChanges).length} reviewed twenty-body deployment changes.`);

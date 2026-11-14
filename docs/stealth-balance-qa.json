@@ -1,0 +1,483 @@
+{
+  "validatedAt": "2026-11-12T04:40:04.184Z",
+  "baselineCommit": "2061253",
+  "regressionReference": "Screen_Recording_20261111_221735_Spck Editor.mp4",
+  "sourceSha256": "f191b7880483b18d1210e40498935a6a8b8b0372de71303cf9e69f3a55fc88d1",
+  "p5Version": "1.9.0",
+  "p5Sha256": "726ac96626b93f5bcaff83a910b6c60d3a9728f063e0eb73b5d0819ffc356915",
+  "renderer": "Chromium SwiftShader; physical-device performance unmeasured",
+  "integrationChecks": {
+    "check-stealth-balance.js": 70,
+    "check-stealth-combat-tracking.js": 183,
+    "check-stealth-perception.js": 12,
+    "check-red-mesa-scope.js": 1220,
+    "check-red-mesa-encounter.js": 14,
+    "check-enemy-transitions.js": 64,
+    "check-cover-sight.js": 31,
+    "check-enemy-shot-reactions.js": 92,
+    "check-stance-ai.js": 30,
+    "check-gate-ambush-isolation.js": 179,
+    "check-frontier-bounties.js": 37,
+    "check-frontier-integration.js": 42,
+    "check-bounty-hud.js": 61,
+    "check-stance-performance.js": 1267,
+    "check-stance-layering.js": 111
+  },
+  "nativeBehavior": {
+    "instantBoundary": [
+      {
+        "distance": 399.99,
+        "phase": "ALERT",
+        "sampleMs": 16.666666666666668,
+        "nativeState": "CHASE"
+      },
+      {
+        "distance": 400,
+        "phase": "ALERT",
+        "sampleMs": 16.666666666666668,
+        "nativeState": "CHASE"
+      },
+      {
+        "distance": 400.01,
+        "phase": "PATROL",
+        "sampleMs": 16.666666666666668,
+        "nativeState": "PATROL"
+      }
+    ],
+    "closeBehind": "PATROL",
+    "closeConcealed": "PATROL",
+    "hearing": {
+      "phase": "ALERT",
+      "visible": true,
+      "suspicion": 1,
+      "goalX": 5674,
+      "goalY": -3600,
+      "angle": 0.0009031933762077922,
+      "origin": {
+        "x": 5391.20370755819,
+        "y": -3600.255419807603
+      },
+      "event": {
+        "id": 1,
+        "x": 5674,
+        "y": -3600,
+        "radius": 313.6,
+        "kind": "RUN",
+        "at": 450
+      }
+    },
+    "historicalHearing": {
+      "source": {
+        "id": 1,
+        "x": 5550,
+        "y": -3520,
+        "radius": 280,
+        "kind": "RUN",
+        "at": 0
+      },
+      "player": {
+        "x": 7400,
+        "y": -3600
+      },
+      "angle": 0.4899573262537283,
+      "phase": "CURIOUS",
+      "visible": false,
+      "goalX": 5550,
+      "goalY": -3520,
+      "sharedAngle": 0.4899573262537283
+    },
+    "fastMovement": [
+      {
+        "phase": "INVESTIGATE",
+        "distance": 215.9568086382933,
+        "firstTurn": 0.06132144929773453,
+        "maxTurn": 0.2914853829701156,
+        "finalAngle": 0,
+        "repeatAngle": 0,
+        "sharedAngle": 0
+      },
+      {
+        "phase": "SEARCH",
+        "distance": 191.96160767847687,
+        "firstTurn": 0.06132144929773453,
+        "maxTurn": 0.2914853829701156,
+        "finalAngle": 0,
+        "repeatAngle": 0,
+        "sharedAngle": 0
+      }
+    ],
+    "groupAlarm": {
+      "distance": 3597.55,
+      "phase": "ALERT",
+      "nativeState": "CHASE",
+      "observed": {
+        "x": 5800,
+        "y": -3600
+      },
+      "hidden": {
+        "player": {
+          "x": -10000,
+          "y": -10000
+        },
+        "visible": false,
+        "memory": {
+          "x": 5800,
+          "y": -3600
+        }
+      }
+    },
+    "combatOrbit": [
+      {
+        "direction": -1,
+        "largestError": 0.04000965260762124,
+        "visibleFrames": 330,
+        "alertFrames": 330,
+        "measuredFrames": 330
+      },
+      {
+        "direction": 1,
+        "largestError": 0.04000965260762124,
+        "visibleFrames": 330,
+        "alertFrames": 330,
+        "measuredFrames": 330
+      }
+    ],
+    "coverFight": [
+      {
+        "kind": "HIGH",
+        "hiddenMs": 6000,
+        "retained": true,
+        "hidden": true,
+        "blockedBullets": 0,
+        "observed": {
+          "x": 5620,
+          "y": -3600
+        },
+        "memory": {
+          "x": 5620,
+          "y": -3600
+        },
+        "hiddenPlayer": {
+          "x": 5665,
+          "y": -3570
+        },
+        "phase": "ALERT",
+        "loseMs": 15000,
+        "reacquired": true
+      },
+      {
+        "kind": "LOW",
+        "hiddenMs": 6000,
+        "retained": true,
+        "hidden": true,
+        "blockedBullets": 0,
+        "observed": {
+          "x": 5620,
+          "y": -3600
+        },
+        "memory": {
+          "x": 5620,
+          "y": -3600
+        },
+        "hiddenPlayer": {
+          "x": 5620,
+          "y": -3600
+        },
+        "phase": "ALERT",
+        "loseMs": 15000,
+        "reacquired": true
+      }
+    ],
+    "audibleCoveredFight": {
+      "elapsedMs": 18000,
+      "retained": true,
+      "hidden": true,
+      "blockedBullets": 0,
+      "playerShots": 5,
+      "source": {
+        "id": 5,
+        "x": 5680,
+        "y": -3256.2502579003876,
+        "radius": 850,
+        "kind": "SHOT",
+        "at": 16100
+      },
+      "memory": {
+        "x": 5680,
+        "y": -3256.2502579003876
+      },
+      "player": {
+        "x": 5680,
+        "y": -3254.2502579003894
+      },
+      "acousticSamples": [
+        {
+          "source": {
+            "id": 1,
+            "x": 5620,
+            "y": -3580,
+            "radius": 850,
+            "kind": "SHOT",
+            "at": 100
+          },
+          "guard": {
+            "x": 5402.45,
+            "y": -3600
+          },
+          "distance": 218.46739459241985,
+          "reach": 357
+        },
+        {
+          "source": {
+            "id": 2,
+            "x": 5635,
+            "y": -3544.2731585614456,
+            "radius": 850,
+            "kind": "SHOT",
+            "at": 4100
+          },
+          "guard": {
+            "x": 5471.2712516194615,
+            "y": -3564.2731585614456
+          },
+          "distance": 164.94575789106457,
+          "reach": 357
+        },
+        {
+          "source": {
+            "id": 3,
+            "x": 5650,
+            "y": -3447.629876911867,
+            "radius": 850,
+            "kind": "SHOT",
+            "at": 8100
+          },
+          "guard": {
+            "x": 5472.0989740916875,
+            "y": -3467.629876911867
+          },
+          "distance": 179.02171661346023,
+          "reach": 357
+        },
+        {
+          "source": {
+            "id": 4,
+            "x": 5665,
+            "y": -3351.968371154849,
+            "radius": 850,
+            "kind": "SHOT",
+            "at": 12100
+          },
+          "guard": {
+            "x": 5471.755706192939,
+            "y": -3371.968371154849
+          },
+          "distance": 194.2764964914429,
+          "reach": 357
+        },
+        {
+          "source": {
+            "id": 5,
+            "x": 5680,
+            "y": -3256.2502579003876,
+            "radius": 850,
+            "kind": "SHOT",
+            "at": 16100
+          },
+          "guard": {
+            "x": 5471.2731196939485,
+            "y": -3276.2502579003876
+          },
+          "distance": 209.68288094715015,
+          "reach": 357
+        }
+      ]
+    },
+    "existingAlertDispatch": [
+      {
+        "phase": "ALERT",
+        "state": "CHASE",
+        "visible": false,
+        "stunTimer": 0,
+        "goal": {
+          "x": 5700,
+          "y": -3600
+        }
+      },
+      {
+        "phase": "ALERT",
+        "state": "CHASE",
+        "visible": false,
+        "stunTimer": 0,
+        "goal": {
+          "x": 5700,
+          "y": -3600
+        }
+      },
+      {
+        "phase": "ALERT",
+        "state": "CHASE",
+        "visible": false,
+        "stunTimer": 120,
+        "goal": {
+          "x": 5700,
+          "y": -3600
+        }
+      }
+    ],
+    "lostSight": {
+      "lastSeen": {
+        "x": 5900,
+        "y": -3600
+      },
+      "playerHiddenAt": {
+        "x": 5750,
+        "y": -3440
+      },
+      "phases": [
+        {
+          "afterHideMs": 50,
+          "phase": "ALERT",
+          "visible": true,
+          "goalX": 5900,
+          "goalY": -3600
+        },
+        {
+          "afterHideMs": 15000,
+          "phase": "SEARCH",
+          "visible": false,
+          "goalX": 5900,
+          "goalY": -3600
+        },
+        {
+          "afterHideMs": 21550,
+          "phase": "PATROL",
+          "visible": false,
+          "goalX": 5900,
+          "goalY": -3600
+        }
+      ]
+    }
+  },
+  "scenes": [
+    {
+      "scene": "bounty-progress-320x568.png",
+      "width": 320,
+      "height": 568,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "stackDelta": 0,
+      "fault": null
+    },
+    {
+      "scene": "bounty-ready-320x568.png",
+      "width": 320,
+      "height": 568,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "stackDelta": 0,
+      "fault": null
+    },
+    {
+      "scene": "bounty-progress-390x844.png",
+      "width": 390,
+      "height": 844,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "stackDelta": 0,
+      "fault": null
+    },
+    {
+      "scene": "bounty-ready-390x844.png",
+      "width": 390,
+      "height": 844,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "stackDelta": 0,
+      "fault": null
+    },
+    {
+      "scene": "bounty-progress-844x390.png",
+      "width": 844,
+      "height": 390,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "stackDelta": 0,
+      "fault": null
+    },
+    {
+      "scene": "bounty-ready-844x390.png",
+      "width": 844,
+      "height": 390,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "stackDelta": 0,
+      "fault": null
+    },
+    {
+      "scene": "ordinary-enemy-stealth-city.png",
+      "width": 844,
+      "height": 390,
+      "phase": "ALERT",
+      "alertedGuards": 94,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "stackDelta": 0,
+      "fault": null
+    },
+    {
+      "scene": "red-mesa-day.png",
+      "hour": 13,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "stackDelta": 0,
+      "fault": null
+    },
+    {
+      "scene": "red-mesa-night.png",
+      "hour": 0,
+      "gl": {
+        "ok": true,
+        "on": true,
+        "error": 0,
+        "failure": ""
+      },
+      "stackDelta": 0,
+      "fault": null
+    }
+  ],
+  "errors": [],
+  "rendererWarnings": []
+}

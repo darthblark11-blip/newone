@@ -126,37 +126,35 @@ ok('no fixture core is a hard-edged disc under the additive blend',
    !/ellipse\(L\.x, L\.y,/.test(nightFn) && !/ellipse\(fx, fy,/.test(nightFn),
    (nightFn.match(/softBlob\(/g) || []).length + ' soft cores');
 
-console.log('\n== the player carries no light, the weapon does ==');
-// A pool pinned to the PLAYER means the player is never in the dark. A torch
-// bolted to the gun goes away when they pick up a scavenged one, which is the
-// difference worth having.
-ok('nothing is emitted from the player themselves',
+console.log('\n== the player carries a body-mounted flashlight at night ==');
+ok('the body mount does not restore the old large player light pool',
    !/x: player\.x, y: player\.y \+ 6, r: 240/.test(src));
-ok('the torch is keyed off the equipped weapon',
-   /const wk = w \? weaponKey\(w\) : '';/.test(emitFn) && /WEAPON_TORCH\[wk\]/.test(emitFn));
-ok('and leaves from the muzzle, not the player centre',
-   /WEAPON_MUZZLE\[wk\]/.test(emitFn) && /ca \* m\[0\] - sa \* m\[1\]/.test(emitFn));
-// A key that is not in WEAPONS is silent: the lookup just never matches and
-// that weapon quietly has no torch.
-const wt = /const WEAPON_TORCH = \{([\s\S]*?)\};/.exec(src);
-const wkeys = wt ? (wt[1].match(/(\w+):\s*1/g) || []).map(s => s.split(':')[0].trim()) : [];
-const known = Object.keys(probe('WEAPONS'));
-const bogus = wkeys.filter(k => !known.includes(k));
-// A muzzle offset that does not match the one Character.show() fires from puts
-// the beam and the rounds in different places.
+ok('surface and underground use the shared body flashlight',
+   /gatherPlayerFlashlight\(out, flashlight\)/.test(emitFn) &&
+   P('gatherUndergroundEmitters.toString().includes("gatherPlayerFlashlight(out)")'));
+const movingWeaponLight=P(`(() => {
+  const c=new Character(100,200,true);c.aimAngle=Math.PI/2;c.isMoving=true;c.walkCycle=.5;
+  return weaponLightMuzzle(c,WEAPON_MUZZLE.ASSAULT_RIFLE);
+})()`);
+ok('muzzle flashes still leave from the rotated, moving weapon muzzle',
+   /weaponLightMuzzle\(c,m\)/.test(emitFn) &&
+   Math.abs(movingWeaponLight.x-94)<1e-8&&Math.abs(movingWeaponLight.y-247-2*Math.sin(.5))<1e-8);
+const bodyLight=P(`(() => {
+  const previous=player;
+  try {
+    player=new Character(100,200,true);player.aimAngle=Math.PI/2;
+    const out=[];gatherPlayerFlashlight(out,true);return out[0];
+  } finally {player=previous;}
+})()`);
+ok('the new mount matches Level 9 and is independent of the gun muzzle',
+   bodyLight.playerFlashlight && Math.abs(bodyLight.x-100)<1e-8 &&
+   Math.abs(bodyLight.y-218)<1e-8 && bodyLight.z===24);
 const mz = /const WEAPON_MUZZLE = \{([\s\S]*?)\};/.exec(src);
 const mkeys = mz ? (mz[1].match(/(\w+):\s*\[/g) || []).map(x => x.split(':')[0].trim()) : [];
-ok('every torch weapon has a muzzle offset',
-   wkeys.length > 0 && wkeys.every(k => mkeys.includes(k)), mkeys.join(' '));
-ok('every WEAPON_TORCH key is a real weapon', wkeys.length > 0 && bogus.length === 0,
-   bogus.length ? 'unknown: ' + bogus.join(' ') : wkeys.join(' '));
-ok('the scavenged guns deliberately have none',
-   !wkeys.includes('SHOTGUN') && !wkeys.includes('REVOLVER') && !wkeys.includes('COACH_GUN'),
-   'no torch: SHOTGUN REVOLVER COACH_GUN');
-// The muzzle is out in front of the player, so the clearance has to reach back
-// past them or the reduction finds the bearer's own silhouette behind the lamp.
-ok('and the torch clears its own bearer', /rMin: m\[0\] \+ \d+/.test(emitFn));
-ok('it draws no fixture -- the beam is the light', /fix: null/.test(emitFn));
+ok('muzzle flash offsets still name actual weapons',
+   mkeys.length>0 && mkeys.every(k=>Object.keys(probe('WEAPONS')).includes(k)),mkeys.join(' '));
+ok('the body light clears its own bearer',bodyLight.rMin===40);
+ok('the flashlight draws no separate fixture',bodyLight.fix===null);
 ok('its spill is a fixed world radius, not a fraction of the beam',
    /const TORCH_SPILL_R = \d+;/.test(src) &&
    /uSpill \* \(1\.0 - smoothstep\(0\.0, uSpillR, r\)\)/.test(rig));
@@ -444,8 +442,8 @@ console.log('\n== canopies cast, in every biome ==');
 // the height pass has to read the decor list, not the solids.
 ok('the height pass walks the live decor list', /for \(const dc of ch\.decor\)/.test(rig));
 ok('sized off CANOPY_MASS at the entry own scale',
-   /CANOPY_MASS\[dc\.t\]/.test(rig) && /cp\[1\] \* cs, cp\[2\] \* cs/.test(rig));
-ok('the trunk stays a collision volume', /if \(b\.isTreeTrunk\) continue;/.test(rig));
+   /CANOPY_MASS\[dc\.t\]/.test(rig) && /cp\[1\] \* cs \* crown, cp\[2\] \* cs \* crown/.test(rig));
+ok('trunks and timber companions stay collision volumes', /if \(b\.isTreeTrunk \|\| b\.isForestTimber\) continue;/.test(rig));
 // A CANOPY_MASS key that no clutter type produces is a caster for a tree that
 // does not exist; one with no art in paintClutter is worse.
 const cm = /const CANOPY_MASS = \{([\s\S]*?)\};/.exec(src);
