@@ -25098,6 +25098,7 @@ function hostileFrontlineRange(a) {
 function resetHostileFrontline() {
   const s=_hostileFrontline;s.frame=-1;s.player=null;s.level=-1;s.limited=false;
   s.clock=0;s.nextSelect=0;s.candidates.length=0;s.eligible.clear();s.allowed.clear();s.records=new WeakMap();
+  resetHostilePositions();
 }
 function hostileFrontlineDistance(a) {
   const dx=a.x-player.x,dy=a.y-player.y;return dx*dx+dy*dy;
@@ -25184,6 +25185,164 @@ function hostileFrontlineNeedsSight(a) {
   const record=_hostileFrontline.records.get(a);
   return !!record&&record.needsSight&&record.grantedFrame===frameCount;
 }
+
+// Firing admission and a place to stand are separate decisions. Stable marks
+// stay inside firearm reach and survive firing-turn rotation; reserves can
+// settle instead of repeatedly steering into the same 200-unit stopping ring.
+const HOSTILE_POSITIONING={enabled:true,spacing:64,refreshMs:240,planBudget:48,maxPlans:8};
+const _hostilePositioning={frame:-1,player:null,level:-1,clock:0,nextSweep:0,sequence:0,
+  checks:0,plans:0,records:new Map(),cells:new Map(),live:new Set(),
+  stats:{frames:0,sweeps:0,rosterReads:0,plans:0,collisionChecks:0,holds:0,moves:0,claims:0,retries:0}};
+const _hostilePositionOffsets=[0,1,-1,2,-2,4,-4,6,-6,8,-8,12,-12,16,-16,20,-20];
+function resetHostilePositions() {
+  const s=_hostilePositioning;s.frame=-1;s.player=null;s.level=-1;s.clock=0;s.nextSweep=0;s.sequence=0;
+  s.checks=s.plans=0;s.records.clear();s.cells.clear();s.live.clear();
+}
+function hostilePositionEligible(a,target) {
+  return HOSTILE_POSITIONING.enabled&&!!a&&target===player&&!a.isPlayer&&!a.isFriendly&&!a.isNeutral&&
+    a.hp>0&&!a.dead&&a.state==='CHASE'&&!a.isUnarmed&&!a.isCoward&&!a.isNM0Scientist&&
+    !a.legInjury&&!a.mounted&&!a.knockedOut&&!(a.stunTimer>0)&&!(a.meleeTimer>0)&&
+    a.eType!=='DAD'&&a.eType!=='SIA'&&actorCanUseStances(a)&&!actorStanceSuppressed(a)&&
+    !!a.currentWeapon&&!(a.stance&&(a.stance.to===2||a.stance.value>1.01))&&
+    shovelPlayerDepth(a)<.5&&!(a.shovelDepthTarget>0);
+}
+function hostilePositionRelease(record) {
+  if(!record||record.cell===undefined)return;
+  const s=_hostilePositioning,bucket=s.cells.get(record.cell);
+  if(bucket){const at=bucket.indexOf(record);if(at>=0)bucket.splice(at,1);if(!bucket.length)s.cells.delete(record.cell);}
+  record.cell=undefined;record.kind=null;
+}
+function hostilePositionTick() {
+  const s=_hostilePositioning;
+  if(s.player!==player||s.level!==currentLevel)resetHostilePositions();
+  if(s.frame===frameCount)return s;
+  s.frame=frameCount;s.player=player;s.level=currentLevel;s.checks=s.plans=0;s.stats.frames++;
+  if(!doTick||isPaused)return s;
+  s.clock+=Math.min(100,Math.max(0,Number(deltaTime)||0));
+  if(s.clock>=s.nextSweep){
+    s.nextSweep=s.clock+HOSTILE_POSITIONING.refreshMs;s.live.clear();s.stats.sweeps++;
+    for(let i=0;i<enemiesList.length;i++){s.live.add(enemiesList[i]);s.stats.rosterReads++;}
+    for(const [actor,r]of s.records){
+      if(!s.live.has(actor)||!hostilePositionEligible(actor,r.target)||
+          hostileFrontlineTarget(actor)!==r.target||s.clock-r.used>1200){
+        hostilePositionRelease(r);s.records.delete(actor);
+      }else if(r.kind==='cover'&&!(actor.cover&&actor.cover.active)&&!(actor._enemyCover&&actor._enemyCover.goal))hostilePositionRelease(r);
+    }
+  }
+  return s;
+}
+function hostilePositionRecord(a,target) {
+  const s=hostilePositionTick();let r=s.records.get(a);
+  if(!r){r={actor:a,target,id:++s.sequence,used:s.clock,retryAt:0,kind:null,x:a.x,y:a.y};s.records.set(a,r);}
+  if(r.target!==target){hostilePositionRelease(r);r.target=target;r.retryAt=0;}
+  r.used=s.clock;return r;
+}
+function hostilePositionAvailable(a,x,y) {
+  if(!HOSTILE_POSITIONING.enabled)return true;
+  const s=hostilePositionTick(),size=HOSTILE_POSITIONING.spacing,cx=Math.floor(x/size),cy=Math.floor(y/size),d2=size*size;
+  for(let ox=-1;ox<=1;ox++)for(let oy=-1;oy<=1;oy++){
+    const bucket=s.cells.get(cellKey(cx+ox,cy+oy));if(!bucket)continue;
+    for(const r of bucket){
+      if(r.actor===a||r.actor.dead||!(r.actor.hp>0))continue;
+      const dx=x-r.x,dy=y-r.y;if(dx*dx+dy*dy<d2)return false;
+    }
+  }
+  return true;
+}
+function hostilePositionClaim(r,x,y,kind) {
+  if(r.cell!==undefined&&r.x===x&&r.y===y&&r.kind===kind)return;
+  hostilePositionRelease(r);r.x=x;r.y=y;r.kind=kind;
+  const s=_hostilePositioning,size=HOSTILE_POSITIONING.spacing;
+  r.cell=cellKey(Math.floor(x/size),Math.floor(y/size));
+  let bucket=s.cells.get(r.cell);if(!bucket){bucket=[];s.cells.set(r.cell,bucket);}bucket.push(r);s.stats.claims++;
+}
+function hostileCoverClaim(a,goal,target=player) {
+  if(!hostilePositionEligible(a,target))return true;
+  if(!hostilePositionAvailable(a,goal.x,goal.y))return false;
+  const r=hostilePositionRecord(a,target);hostilePositionClaim(r,goal.x,goal.y,'cover');return true;
+}
+function hostilePositionRange(a) {
+  let reach=hostileFrontlineRange(a);
+  // A standing leg shot can reach less far than the ordinary weapon envelope.
+  // Use the already chosen aim zone, without doing another anatomy query.
+  if(a.stanceAimZone==='LEGS'&&typeof legShotRangeForWeapon==='function'){
+    const low=legShotRangeForWeapon('LEGS',a.currentWeapon,a);if(low>0)reach=Math.min(reach,low);
+  }
+  return reach;
+}
+function hostilePositionGoal(a,target,tx,ty,canSee,admitted) {
+  if(!doTick||isPaused||!combatStanceContext())return null;
+  if(!hostilePositionEligible(a,target)||!Number.isFinite(tx)||!Number.isFinite(ty))return null;
+  const dx=a.x-tx,dy=a.y-ty;
+  const range2=dx*dx+dy*dy;
+  if(range2<120*120||range2>900*900){
+    const old=_hostilePositioning.records.get(a);if(old&&old.kind==='hold')hostilePositionRelease(old);
+    return null;
+  }
+  const s=hostilePositionTick(),r=hostilePositionRecord(a,target);
+  if(r.kind==='cover')return null;
+  if(r.kind==='hold'){
+    const ax=tx-r.anchorX,ay=ty-r.anchorY;
+    const gx=r.x-tx,gy=r.y-ty,reach=Math.max(80,hostilePositionRange(a)-12);
+    let blocked=false;
+    if(s.clock>=r.nextCheck&&s.checks<HOSTILE_POSITIONING.planBudget){
+      s.checks++;s.stats.collisionChecks++;r.nextCheck=s.clock+600+(r.id%7)*17;blocked=a.checkCol(r.x,r.y);
+    }
+    if(ax*ax+ay*ay>72*72||gx*gx+gy*gy>reach*reach||r.stuckMs>900||blocked){
+      hostilePositionRelease(r);r.retryAt=s.clock+((r.stuckMs||0)>900?240:0);r.stuckMs=0;s.stats.retries++;
+    }else return r;
+  }
+  // Share a strict collision-probe budget. A deferred guard holds its current
+  // ground for a few frames, rather than joining an unassigned headlong chase.
+  r.pending=true;
+  if(s.clock<r.retryAt)return r.failed?null:r;
+  if(s.plans>=HOSTILE_POSITIONING.maxPlans||s.checks+2>HOSTILE_POSITIONING.planBudget)return r;
+  s.plans++;s.stats.plans++;
+  const angle=Math.atan2(dy,dx),base=Math.min(isHardMode?330:238,Math.max(132,hostilePositionRange(a)-162));
+  for(let i=0;i<_hostilePositionOffsets.length&&s.checks+2<=HOSTILE_POSITIONING.planBudget;i++){
+    const radius=base+((r.id+Math.floor(i/6))%3)*68;
+    const theta=angle+_hostilePositionOffsets[i]*HOSTILE_POSITIONING.spacing/radius*1.12+
+      (((r.id*37)%11)-5)*.004;
+    const x=tx+Math.cos(theta)*radius,y=ty+Math.sin(theta)*radius;
+    if(!hostilePositionAvailable(a,x,y))continue;
+    s.checks++;s.stats.collisionChecks++;if(a.checkCol(x,y))continue;
+    const gx=x-a.x,gy=y-a.y,len=Math.hypot(gx,gy)||1,step=Math.min(28,len);
+    s.checks++;s.stats.collisionChecks++;
+    if(a.checkCol(a.x+gx/len*step,a.y+gy/len*step))continue;
+    hostilePositionClaim(r,x,y,'hold');r.anchorX=tx;r.anchorY=ty;
+    r.pending=r.failed=false;r.stuckMs=0;r.lastDistance=Infinity;r.nextCheck=s.clock+600;
+    return r;
+  }
+  // Native obstacle steering can keep approaching an obstructed last contact.
+  // Revisit placement at a staggered cadence instead of probing every frame.
+  r.failed=true;r.pending=false;r.retryAt=s.clock+450+(r.id%7)*31;return null;
+}
+function hostilePositionMove(a,r,speed) {
+  const s=_hostilePositioning;
+  if(r.pending){s.stats.holds++;a.gait+=(0-a.gait)*GAIT_EASE;return {x:0,y:0};}
+  const dx=r.x-a.x,dy=r.y-a.y,d2=dx*dx+dy*dy;
+  if(d2<8*8){r.stuckMs=0;s.stats.holds++;a.gait+=(0-a.gait)*GAIT_EASE;return {x:0,y:0};}
+  const distance=Math.sqrt(d2);
+  let vx=dx/distance*Math.min(speed,distance),vy=dy/distance*Math.min(speed,distance);
+  const cx=a.x-r.anchorX,cy=a.y-r.anchorY,radius2=cx*cx+cy*cy;
+  // A mark on the opposite side is approached around the contact, not through
+  // the player and the front rank. This needs no actor scans or geometry rays.
+  if(radius2>1&&radius2<190*190){
+    const t=-(cx*dx+cy*dy)/d2,px=cx+dx*t,py=cy+dy*t;
+    if(t>0&&t<1&&px*px+py*py<150*150){
+      const radius=Math.sqrt(radius2),cross=cx*(r.y-r.anchorY)-cy*(r.x-r.anchorX);
+      const side=Math.abs(cross)>.001?Math.sign(cross):r.id%2?1:-1;
+      const outward=Math.max(0,(178-radius)*.06);
+      vx=(-cy*side+cx*outward)/radius;vy=(cx*side+cy*outward)/radius;
+      const length=Math.hypot(vx,vy)||1;vx=vx/length*speed;vy=vy/length*speed;
+    }
+  }
+  const move=a.attemptMove(vx,vy);
+  s.stats.moves++;
+  if(distance>=r.lastDistance-.15)r.stuckMs=(r.stuckMs||0)+Math.min(100,Math.max(0,Number(deltaTime)||0));
+  else r.stuckMs=0;
+  r.lastDistance=distance;return move;
+}
 function enemyCoverEligible(a) {
   return !!a&&!a.legInjury&&!a.isPlayer&&!a.isNeutral&&!a.isUnarmed&&!a.isCoward&&!a.mounted&&
     !String(a.eType||'').startsWith('OCCULT_')&&a.eType!=='MOLOTOV'&&
@@ -25202,6 +25361,7 @@ function enemyCoverGoal(a,threatX,threatY,state) {
     const span=Math.max(min+inset,Math.min(max-inset,tangent));
     const x=nx*(plane+17)+tx*span,y=ny*(plane+17)+ty*span;
     if((threatX-x)*nx+(threatY-y)*ny>=-12)return;
+    if(hostilePositionEligible(a,state.target||player)&&!hostilePositionAvailable(a,x,y))return;
     if(a.stanceAimZone==='LEGS') {
       const range=legShotRangeForWeapon('LEGS',a.currentWeapon,a);
       const fireRange=kind==='LOW'&&range?LEG_SHOT_RANGES.STAND:range;
@@ -25237,7 +25397,7 @@ function enemyCoverGoal(a,threatX,threatY,state) {
   for(let i=0;i<goals.length;i++) {
     const goal=goals[i];let clear=true;
     for(let step=1;step<=4;step++)if(a.checkCol(a.x+(goal.x-a.x)*step/4,a.y+(goal.y-a.y)*step/4)){clear=false;break;}
-    if(clear)return goal;
+    if(clear&&hostileCoverClaim(a,goal,state.target||player))return goal;
   }
   return null;
 }
@@ -25249,15 +25409,28 @@ function updateEnemyCoverAI(a,target,canSee,distance,elapsedMs=deltaTime,allowAc
     if(a&&a._enemyCover){a._enemyCover.goal=null;a._coverApproach=false;}
     return false;
   }
+  // Initialize/validate admission before recording an occupied contact: a new
+  // run's first admission also resets transient positioning reservations.
+  const admitted=!!(a.cover&&a.cover.active)&&hostileFrontlineFireAllowed(a,target);
   const dt=Math.min(100,Math.max(0,Number(elapsedMs)||0));
   const state=a._enemyCover||(a._enemyCover={searchMs:0,cycleMs:(a.aiOffset||0)*83,seenMs:0,target:null,goal:null});
   if(state.target!==target){state.target=target;state.seenMs=0;state.goal=null;state.searchMs=0;}
+  if(state.goal&&!hostileCoverClaim(a,state.goal,target)){
+    state.goal=null;state.searchMs=400;
+    if(a.cover&&a.cover.active)releaseActorCover(a,true);
+  }
   if(canSee){state.seenMs=1800;state.lastX=target.x;state.lastY=target.y;}
   else state.seenMs=Math.max(0,state.seenMs-dt);
   if(state.seenMs<=0) {
     state.goal=null;a._coverApproach=false;
     if(a.cover&&a.cover.active)releaseActorCover(a,true);
     return false;
+  }
+  // Contact can be acquired by ordinary movement without a planned cover goal.
+  // Its occupied body position still belongs to this guard, not the next one
+  // searching for the same wall end.
+  if(!state.goal&&a.cover&&a.cover.active&&!hostileCoverClaim(a,a,target)){
+    releaseActorCover(a,true);state.searchMs=400;return false;
   }
   state.searchMs=Math.max(0,state.searchMs-dt);
   if(state.goal&&(!coverSolidKind(state.goal.solid)||
@@ -25289,7 +25462,6 @@ function updateEnemyCoverAI(a,target,canSee,distance,elapsedMs=deltaTime,allowAc
     return true;
   }
   state.cycleMs+=dt;
-  const admitted=hostileFrontlineFireAllowed(a,target);
   const aiming=admitted&&state.cycleMs%1500<560&&a.reloadTimer<=0&&!enemyShotReactionHoldsLow(a);
   a.isMoving=false;a.gait+=(0-a.gait)*GAIT_EASE;a._coverApproach=false;
   updateActorCover(a,dt,0,0,aiming);
@@ -27705,6 +27877,7 @@ if (this.eType === "COW") {
         }
         else {
             if(updateEnemyCoverAI(this,trg,canSee,distToTarget,deltaTime,shootingAllowed))return;
+            const position=hostilePositionGoal(this,trg,targetX,targetY,canSee,shootingAllowed);
             if (typeof isHardMode !== 'undefined' && isHardMode) {
                 if (this.standStillTimer === undefined) { this.standStillTimer = 0; this.strafeTimer = 0; this.strafeDir = 1; }
                 let mAng = iA;
@@ -27717,7 +27890,12 @@ if (this.eType === "COW") {
                     mAng = atan2(fY - this.y, fX - this.x);
                 }
 
-                if (this.strafeTimer > 0) {
+                if(position&&!(shootingAllowed&&this.strafeTimer>0)) {
+                    const m=hostilePositionMove(this,position,2.45*spd);aDx=m.x;aDy=m.y;
+                    if(this.strafeTimer>0)this.strafeTimer--;
+                    this.standStillTimer=shootingAllowed&&!aDx&&!aDy?this.standStillTimer+1:0;
+                    if(this.standStillTimer>78){this.standStillTimer=0;this.strafeTimer=45;}
+                } else if (this.strafeTimer > 0) {
                     this.strafeTimer--; let sAng = iA + (HALF_PI * this.strafeDir);
                     let vx = cos(sAng) * 3.5 * spd, vy = sin(sAng) * 3.5 * spd;
                     let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y;
@@ -27747,7 +27925,8 @@ if (this.eType === "COW") {
                 }
                 
             } else {
-                if (distToTarget > 200 || (!canSee && distToTarget > 20)) { 
+                if(position){const m=hostilePositionMove(this,position,2.45*spd);aDx=m.x;aDy=m.y;}
+                else if (distToTarget > 200 || (!canSee && distToTarget > 20)) {
                     let vx = cos(iA) * 2.45 * spd, vy = sin(iA) * 2.45 * spd; 
                     let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y; 
                 } 
@@ -30243,9 +30422,13 @@ function updateEntities() {
                           // every one of them before anything looked at whether
                           // it was needed.
                           let dSq = distSq(A.x, A.y, B.x, B.y);
-                          if (dSq < minDist * minDist && dSq > 0) {
+                          if (dSq < minDist * minDist) {
                               let d = Math.sqrt(dSq);
-                              let pA = atan2(A.y - B.y, A.x - B.x);
+                              // Coincident spawns have no bearing. Use the
+                              // stable pair indices instead of ignoring them
+                              // or consuming the gameplay RNG stream.
+                              let pA = dSq>0?atan2(A.y-B.y,A.x-B.x):
+                                ((Math.imul(A._pushIdx+1,73856093)^Math.imul(B._pushIdx+1,19349663))>>>0)/4294967296*TWO_PI;
                               let moveA = !(A.isPlayer && B.eType === "BUG");
                               let moveB = !(B.isPlayer && A.eType === "BUG");
                               
@@ -30283,9 +30466,10 @@ function updateEntities() {
 
               const ax = A.x - B.x, ay = A.y - B.y;
               const d2 = ax * ax + ay * ay;
-              if (d2 < minDist * minDist && d2 > 0) {
+              if (d2 < minDist * minDist) {
                   const d = Math.sqrt(d2);
-                  let pA = atan2(ay, ax);
+                  let pA = d2>0?atan2(ay,ax):
+                    ((Math.imul(i+1,73856093)^Math.imul(j+1,19349663))>>>0)/4294967296*TWO_PI;
                   let pushMag = (minDist - d) * 0.08;
 
                   A.x += cos(pA) * pushMag; A.y += sin(pA) * pushMag;

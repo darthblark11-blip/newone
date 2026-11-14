@@ -118,7 +118,9 @@ ok('An allowed actual pistol shot retains normal ammunition/cooldown and effects
   bullets.length===1&&particles.length===3&&_huntShotSequence===oldShots+1`));
 
 for(const hard of [false,true]){
-  fresh();probe(`isHardMode=${hard};window.rear=gunners[39];rear.x=${hard?450:300};
+  // Start outside the new holding tolerance so this checks actual navigation,
+  // rather than requiring an already settled reserve to waste a movement step.
+  fresh();probe(`isHardMode=${hard};window.rear=gunners[39];rear.x=${hard?450:330};
     rear.cachedTargetDist=rear.x;rear.strafeTimer=${hard?3:0};rear.strafeDir=1;
     rear.standStillTimer=0;rear.stanceCombatTarget=player;rear.stanceCombatElapsed=0;
     window.oldX=rear.x;window.oldY=rear.y;decisions();rear.updateEnemy();`);

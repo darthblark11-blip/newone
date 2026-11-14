@@ -20,6 +20,48 @@ The important change is before the trigger: reserves skip per-frame ready-shot L
 
 Admission uses active world time, freezes on pause and resets with the run, level or player identity. Waiting does not consume fake weapon cooldowns. The coordinator does not draw random numbers or serialize owners.
 
+## Shared combat positions
+
+Healthy ranged humans pursuing the player now reserve separate approach and
+holding marks. Normal-mode marks lie on bands at 238, 306 and 374 units, inside
+the 400-unit firing envelope; hard-mode bands start at 330 units. The bands move
+inward for low-target shots with shorter reach. Reserved marks remain at least
+64 units apart. Positions survive firing-turn rotation and
+reloads, so changing the eight firing owners does not make the entire crowd
+swap places. A guard within eight units of its mark skips movement/avoidance
+work and settles its gait.
+
+`HOSTILE_POSITIONING` controls this behavior independently of admission. Its
+shared per-frame planning budget is eight searches and 48 collision probes,
+including periodic endpoint validation. Spatial claims reject occupied marks
+before collision/peek tests. A shared 240 ms sweep releases dead, removed,
+ineligible or retargeted owners. Failed placement backs off; native obstacle
+steering remains available. These limits cover position planning, not all native
+collision or perception work in the game.
+
+Approaches use the existing visible or last-known target coordinates. A short
+tangent approach prevents guards crossing through the player/front rank to
+reach the opposite side. Marks refresh when the known contact moves materially,
+would leave the mark outside usable firing range, or the approach stalls.
+Close combat within 120 units retains the native reaction/tracking behavior.
+Stealth investigation/flanking, melee, injured/prone actors, mounted actors,
+allies, civilians and specialized enemy movement retain their existing owners.
+
+Cover goals also reserve their occupied positions, including a guard that
+attaches to cover naturally without a planned goal. Another guard cannot claim
+that same wall end. Exact coincident ground and aircraft bodies now separate
+using a deterministic pair direction, without consuming gameplay RNG.
+
+The controlled 64-gunner comparison runs actual `updateEntities()` and native
+movement/separation. During its measured final 240 frames, close pairs below
+44 units fall from **142 to 1**, median nearest-neighbor spacing rises from
+**38.4 to 69.0**, collision probes fall from **167,620 to 24,633** and movement
+attempts from **5,192 to 1,442**. Firing ownership stays capped at eight.
+These are fixture work counts, not measured phone FPS.
+
+See the [before/after preview](previews/hostile-positioning.png) and
+[positioning validation](hostile-positioning-results.json).
+
 ## Validation
 
 ```sh
@@ -28,6 +70,8 @@ node tools/check-hostile-frontline.js
 node tools/check-hostile-acquisition-budget.js
 node tools/check-hostile-special-budget.js
 node tools/check-hostile-commitment-lifecycle.js
+node tools/check-hostile-positioning.js
+node tools/visual-hostile-positioning.cjs
 node tools/check-nm0-global-policy.js
 node tools/check-stealth-balance.js
 node tools/check-stealth-combat-tracking.js
