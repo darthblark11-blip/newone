@@ -850,8 +850,16 @@ function coverStanceLevel(a) {
   return coverRenderActive(a)&&c.kind==='LOW'?raw+(1-c.pop-raw)*c.blend:raw;
 }
 function coverUpperOffset(a) { return coverRenderActive(a)?a.cover.upper:NO_COVER_OFFSET; }
+// During a partial raise one half-turn has two possible paths. Keep the
+// signed angle on the same path as the previous simulation sample.
+function playerCoverAimDelta(a) {
+  const c=a.cover, angle=(a.aimAngle||0)-c.bodyAngle;
+  const previous=Number.isFinite(c.aimTurn)?c.aimTurn:0;
+  return previous+Math.atan2(Math.sin(angle-previous),Math.cos(angle-previous));
+}
 function coverFacingAngle(a) {
   const aim=a.aimAngle||0,c=a.cover;
+  if(a.isPlayer && c.kind==='HIGH')return aim-playerCoverAimDelta(a)*c.blend;
   return aim+Math.atan2(Math.sin(c.bodyAngle-aim),Math.cos(c.bodyAngle-aim))*c.blend;
 }
 function coverAimActive(a) {
@@ -890,7 +898,7 @@ function updateActorCover(a,elapsedMs=deltaTime,dx=0,dy=0,aiming=false) {
     if(!c)c=a.cover={active:false,blend:0,peek:0,pop:0,offsetX:0,offsetY:0,upper:{x:0,y:0},bodyAngle:Math.atan2(contact.ny,contact.nx)};
     const changed=c.solid!==contact.solid||c.nx!==contact.nx||c.ny!==contact.ny;
     Object.assign(c,contact);c.active=true;
-    if(changed){c.validPeek=false;c.peek=0;}
+    if(changed){c.validPeek=false;c.peek=0;c.aimTurn=undefined;}
   } else if(c)c.active=false;
   if(!c)return;
   c.aiming=!!aiming;
@@ -899,6 +907,13 @@ function updateActorCover(a,elapsedMs=deltaTime,dx=0,dy=0,aiming=false) {
   if(c.active) {
     const normal=Math.atan2(c.ny,c.nx),turn=Math.atan2(Math.sin(normal-c.bodyAngle),Math.cos(normal-c.bodyAngle));
     c.bodyAngle+=turn*Math.min(1,dt/120);
+  }
+  if(a.isPlayer && c.kind==='HIGH' && dt>0) {
+    const presented=a._weaponPresentation && a.reloadTimer<=0 && !leftHandAction(a)
+      ?standingWeaponPresentation(a):Number(aiming);
+    const settled=c.blend===0 || (c.blend===1 && (presented===0 || presented===1));
+    const delta=playerCoverAimDelta(a);
+    c.aimTurn=settled?Math.atan2(Math.sin(delta),Math.cos(delta)):delta;
   }
   c.openAim=!!c.active&&(Math.cos(a.aimAngle||0)*c.nx+Math.sin(a.aimAngle||0)*c.ny>=-1e-8);
   const candidate=c.active&&c.kind==='HIGH'&&aiming?coverPeekCandidate(a,c,a.aimAngle||0):null;
@@ -51530,10 +51545,17 @@ function stanceBodyPose(c) {
   const cover=stanceCoverPoseActive(c),p=actorStancePose(c),value=cover?coverStanceLevel(c):c.stance?c.stance.value:0,drop=Math.min(1,value),floor=p.prone||0;
   const upper=cover?coverUpperOffset(c):null,coverX=upper?upper.x:0,coverY=upper?upper.y:0;
   const coverBlend=cover?Math.max(0,Math.min(1,c.cover.blend||0)):0;
+  const highPlayerCover=cover && c.isPlayer && c.cover.kind==='HIGH';
+  const aimTurn=highPlayerCover?playerCoverAimDelta(c)*coverBlend:0;
+  const face=highPlayerCover?c.cover:null;
+  const wallDistance=face&&Number.isFinite(face.plane)?c.x*face.nx+c.y*face.ny-face.plane:Infinity;
+  const wallGap=wallDistance>=0 && wallDistance<=COVER_NEAR_DISTANCE?
+    wallDistance/(elevRenderScale(c.x,c.y)*shovelRenderScale(c)):Infinity;
   const dive=proneDiveArc(c),aiming=cover?coverAimActive(c):stanceArtAiming(c),cycle=c.walkCycle||0,cached=c._stanceBody,roll=proneRollPose(c),lower=crouchLowerPose(c);
   const presentation=c.isPlayer&&c._weaponPresentation&&floor<.001&&c.reloadTimer<=0&&!leftHandAction(c)?standingWeaponPresentation(c):Number(aiming);
   if(cached&&cached.cover===cover&&cached.coverKind===(cover?c.cover.kind:null)&&cached.coverBlend===coverBlend&&cached.coverX===coverX&&cached.coverY===coverY&&
-      cached.coverAim===(c.aimAngle||0)&&cached.dive===dive&&cached.value===value&&cached.cycle===cycle&&cached.moving===!!c.isMoving&&
+      cached.coverAim===(c.aimAngle||0)&&cached.aimTurn===aimTurn&&cached.wallGap===wallGap&&
+      cached.wallNX===face?.nx&&cached.wallNY===face?.ny&&cached.dive===dive&&cached.value===value&&cached.cycle===cycle&&cached.moving===!!c.isMoving&&
       cached.aiming===aiming&&cached.presentation===presentation&&cached.gait===(c.gait||0)&&cached.bodyW===c.bodyW&&cached.bodyH===c.bodyH&&
       cached.roll.heading===roll.heading&&cached.roll.delta===roll.delta&&cached.roll.blend===roll.blend&&
       cached.lower.angle===lower.angle&&cached.lower.backward===lower.backward&&cached.lower.phase===lower.phase&&cached.lower.motion===lower.motion)return cached;
@@ -51544,11 +51566,21 @@ function stanceBodyPose(c) {
   const crouchWeight=drop*(1-floor),step=crouchStepPose(c,lower.phase);
   // The upper body turns as one rigid section. A partial shoulder turn while
   // the hands followed the complete aim arc pulled the sleeves into ribbons.
-  const coverTurn=cover?roll.delta*coverBlend*presentation:0;
+  const coverTurn=cover?(highPlayerCover?aimTurn:roll.delta)*coverBlend*presentation:0;
   const yaw=Math.atan2(left.reach-right.reach,c.bodyH*.72)*.38*floor+step.counterYaw*crouchWeight+roll.turn+coverTurn;
-  const legYaw=lower.yaw*crouchWeight,hipYaw=legYaw-(yaw-coverTurn)*.45+step.hipYaw*crouchWeight;
+  const legYaw=lower.yaw*crouchWeight,restHipYaw=legYaw-(yaw-coverTurn)*.45+step.hipYaw*crouchWeight;
+  // Allow the shoulders to lead by up to 35 degrees at full presentation.
+  // A periodic bias lets the pelvis turn all the way around with the chest.
+  const maxWaistTwist=35*Math.PI/180;
+  const pivot=highPlayerCover?coverTurn+coverBlend*presentation*
+    (yaw-coverTurn-restHipYaw-maxWaistTwist*Math.sin(yaw-restHipYaw)):0;
+  const hipYaw=restHipYaw+pivot, pivotCos=Math.cos(pivot), pivotSin=Math.sin(pivot);
   const size=p.scaleX,hipX=-5*drop-4*floor-dive*2,hipY=roll.offsetY;
   const heading=stanceFacingAngle(c),ca=Math.cos(heading),sa=Math.sin(heading);
+  // In body coordinates, the supporting face is a line perpendicular to
+  // this normal. Reserve the boot's sole, including its forward toe offset.
+  const wallNX=face?ca*face.nx+sa*face.ny:0,wallNY=face?-sa*face.nx+ca*face.ny:0;
+  const bootRadius=highPlayerCover?Math.hypot(1.5+R.foot*.5,R.shinW*.41):0;
   const upperX=(ca*coverX+sa*coverY)/size,upperY=(-sa*coverX+ca*coverY)/size;
   const brace=cover?-2*coverBlend*(1-floor)*(1-presentation):0;
   // Lateral cover is a waist hinge, not an extensible shirt. Most of the
@@ -51562,7 +51594,7 @@ function stanceBodyPose(c) {
     const support=side===1?right:left,opposite=side===1?left:right;
     const drive=Math.max(0,opposite.reach/3.4),tuck=drive*drive*(3-2*drive)*floor;
     const stepLeg=step.legs[side<0?0:1];
-    const hY=side*(5.6+floor*.7)*(1-roll.side*.68),hip={x:hipX-Math.sin(hipYaw)*hY,y:Math.cos(hipYaw)*hY+hipY};
+    const hY=side*(5.6+floor*.7)*(1-roll.side*.68),hip={x:hipX-Math.sin(restHipYaw)*hY,y:Math.cos(restHipYaw)*hY+hipY};
     const knee={x:10*drop-floor*(30-5*tuck)+stepLeg.knee.x*crouchWeight-dive*6,
       y:side*(12.5*drop+floor*(-3.5+5*tuck))*(1-roll.side*.45)+stepLeg.knee.y*crouchWeight};
     const ankle={x:-4*drop-floor*(27-4*tuck)+stepLeg.ankle.x*crouchWeight-dive*8,
@@ -51575,10 +51607,28 @@ function stanceBodyPose(c) {
       point.x=hipX+co*x-si*y;point.y=si*x+co*y+hipY;
     }
     if(cover&&drop<1) {
-      const standing=standingCoverLeg(c,R,side<0?0:1,heading,coverBlend),weight=1-drop;
+      const standing=standingCoverLeg(c,R,side<0?0:1,heading+pivot,coverBlend),weight=1-drop;
       hip.x+=(standing.sx-hip.x)*weight;hip.y+=(standing.sy-hip.y)*weight;
       knee.x+=(standing.kx-knee.x)*weight;knee.y+=(standing.ky-knee.y)*weight;
       ankle.x+=(standing.ax-ankle.x)*weight;ankle.y+=(standing.ay-ankle.y)*weight;
+    }
+    if(pivot) {
+      // The shuffle and outside step were resolved in the pelvis frame.
+      // Turn the whole chain about the waist, including the actual hip socket.
+      for(const joint of [hip,knee,ankle]) {
+        const x=joint.x-hipX,y=joint.y-hipY;
+        joint.x=hipX+pivotCos*x-pivotSin*y;
+        joint.y=hipY+pivotSin*x+pivotCos*y;
+      }
+    }
+    if(highPlayerCover && Number.isFinite(wallGap)) {
+      const correction=bootRadius-wallGap/size-ankle.x*wallNX-ankle.y*wallNY;
+      if(correction>0) {
+        // Shorten the projected step at the wall. Flex the knee partway so
+        // the boot clears the face without displacing the planted waist.
+        ankle.x+=wallNX*correction;ankle.y+=wallNY*correction;
+        knee.x+=wallNX*correction*.5;knee.y+=wallNY*correction*.5;
+      }
     }
     // Seat the sleeve root inside the chest contour. The torso then covers
     // the shoulder cap instead of leaving the arm pasted onto its outer edge.
@@ -51598,7 +51648,7 @@ function stanceBodyPose(c) {
   const head=cover?{x:Math.cos(yaw)*headX-Math.sin(yaw)*headY+upperX+brace,
     y:Math.sin(yaw)*headX+Math.cos(yaw)*headY+hipY+step.chestY*crouchWeight+upperY}:
     {x:headX+upperX+brace,y:headY+chestY};
-  return c._stanceBody={cover,coverKind:cover?c.cover.kind:null,coverBlend,coverX,coverY,coverAim:c.aimAngle||0,upperX,upperY,dive,value,cycle,moving:!!c.isMoving,gait:c.gait||0,bodyW:c.bodyW,bodyH:c.bodyH,drop,floor,size,aiming,presentation,yaw,hipYaw,hipX,hipY,chestX,chestY,joints,head,R,
+  return c._stanceBody={cover,aimTurn,wallGap,wallNX:face?.nx,wallNY:face?.ny,coverKind:cover?c.cover.kind:null,coverBlend,coverX,coverY,coverAim:c.aimAngle||0,upperX,upperY,dive,value,cycle,moving:!!c.isMoving,gait:c.gait||0,bodyW:c.bodyW,bodyH:c.bodyH,drop,floor,size,aiming,presentation,yaw,hipYaw,hipX,hipY,chestX,chestY,joints,head,R,
     torsoLength,torsoWidth,crouchWeight,step,roll,lower};
 }
 // A native gun keeps its own proportions. One rigid mount owns the solid,
