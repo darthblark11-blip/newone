@@ -6,6 +6,12 @@ const PLAYER3D_HEAD_SCALE = 1;
 const CITY3D_GARMENTS = Object.freeze({
   CITY_CITIZEN_F:'city_blouse', CITY_NEUTRAL_M:'city_work_vest', CITY_THUG_M:'city_tracksuit'
 });
+const FRONTIER3D_GARMENTS = Object.freeze({
+  FARMER_MALE: 'frontier_overalls', FARMER_FEMALE: 'frontier_farmer_dress', COWBOY: 'frontier_cowboy_vest', COWGIRL: 'frontier_cowboy_vest', LOCAL_COP: 'frontier_cop_coat', VILLAGER_MALE: 'frontier_villager_apron', VILLAGER_FEMALE: 'frontier_pinafore',
+  });
+const FRONTIER3D_HEADWEAR = Object.freeze({
+  STRAW: 'frontier_straw_hat', COP_HAT: 'frontier_cop_hat', FLAT_CAP: 'frontier_flat_cap', BONNET: 'frontier_bonnet',
+  });
 const Player3DMath = (() => {
   const clamp=(x,a=0,b=1)=>Math.max(a,Math.min(b,Number(x)||0));
   const point=(x=0,y=0,z=0)=>({x:Number(x)||0,y:Number(y)||0,z:Number(z)||0});
@@ -542,6 +548,9 @@ function player3DPose(actor, options = {}) {
     if(streetResident && length>0 && hair!==3)
       oval('city_nape',p.head,headRadius*(length===1?.82:1),headRadius,headRadius,hairColor,'civilian_nape',scalp);
   }
+  const frontierGarment=FRONTIER3D_GARMENTS[c.eType];
+  if(frontierGarment&&selected('frontier_clothing')&&assetMeshes&&assetMeshes[frontierGarment]){const torso=parts.find(part=>part.part==='torso');if(torso)addPart(frontierGarment,palette.shirt,torso.matrix,'frontier_clothing');}
+  if((c.eType==='FARMER_FEMALE'||c.eType==='COWGIRL'||c.eType==='FEMALE_PISTOL')&&selected('frontier_hair')&&assetMeshes&&assetMeshes.frontier_ponytail){const head=parts.find(part=>part.part==='head');if(head)addPart('frontier_ponytail',M.color(identity.hairCol||c.hairCol,[32,27,26]),head.matrix,'frontier_hair');}
   const arms=p.arms||[],legs=p.legs||[];
   arms.forEach((arm,i)=>{
     const side=arm.side===-1||arm.side===1?arm.side:i?1:-1,tag=side<0?'left':'right';
@@ -651,8 +660,9 @@ function player3DPose(actor, options = {}) {
       if(!c.isPlayer&&hat) {
         const wide=hat==='STETSON'||hat==='FRONTIER_STETSON'||hat==='BANDIT_HAT';
         const helmetColor=identity.eType==='NM0_CITY_GUARD'?[108,127,118]:identity.isMilitary?[40,80,40]:identity.eType==='NM0_GREY_FATIGUE'?[170,175,180]:[190,170,130];
-        const color=wide?M.color(identity.hatCol,hat==='BANDIT_HAT'?[34,30,30]:[96,72,46]):helmetColor;
-        if(wide&&nativeFrames)fittedOval('cowboy_hat',add(p.head,mul(basis.z,4)),hat==='BANDIT_HAT'?27:28,hat==='BANDIT_HAT'?25:26,4.5,color,'headwear',basis,p.chestHeading);
+        const color=wide?M.color(identity.hatCol,hat==='BANDIT_HAT'?[34,30,30]:[96,72,46]):helmetColor
+          ;const frontierHat=FRONTIER3D_HEADWEAR[hat];const head=frontierHat?parts.find(part=>part.part==='head'):null;if(frontierHat&&head&&assetMeshes&&assetMeshes[frontierHat]){addPart(frontierHat,hat==='BONNET'?M.color(identity.bonnetCol,[188,164,132]):hat==='COP_HAT'?M.color(identity.hatCol,[46,54,68]):hat==='STRAW'?M.color(identity.hatCol,[212,186,120]):M.color(identity.hatCol,[88,78,68]),head.matrix,'hat');}
+        else if(wide&&nativeFrames)fittedOval('cowboy_hat',add(p.head,mul(basis.z,4)),hat==='BANDIT_HAT'?27:28,hat==='BANDIT_HAT'?25:26,4.5,color,'headwear',basis,p.chestHeading);
         else if(hat==='HELMET'||hat==='NM0_HELMET')helmet(color);
         else oval(wide?'cowboy_hat':hat==='HOOD'||hat==='OCCULT_HOOD'?'hood':'helmet',add(p.head,mul(basis.z,wide?4:2)),wide?6.2:7.1,wide?6.5:7.3,wide?4.5:7.5,color,'headwear');
       } else if(hat){
