@@ -82,4 +82,47 @@ for (const role of ['player','enemy','city']) {
   }
   assert.ok(contacts.every(n=>n>=5),role+' exercises consecutive grounded frames on both feet');
 }
-console.log(samples+' gait samples and '+plantedFrames+' consecutive planted-foot comparisons passed for player, enemy and city resident');
+// At a wall the 3D boots and knees must follow the turned pelvis through the
+// inward peek, both tangents and the open outward arc.
+const bootVertices=probe('player3DFitVertices(PLAYER3D_ASSET.meshes.foot)');
+let coverLengths=null,coverSamples=0;
+for(const trackContacts of [false,true])for(const end of [-1,1]){
+  probe(`buildings=activeBuildings=[{x:40,y:0,w:20,h:160,isWall:true}];activeParkingCars=[];invalidateColIndex();
+    player=new Character(15,${end*70},true);player.currentWeapon=WEAPONS.PISTOL;player.isArmed=true;
+    player.aimAngle=0;resetActorStance(player);rightStick.active=true;rightStick.dx=1;rightStick.dist=.4;
+    for(let i=0;i<12;i++){frameCount++;updateActorCover(player,1000/60,6,0,true);}`);
+  assert.ok(probe("player.cover.kind==='HIGH'&&player.cover.attached&&player.cover.peek===1"),'acquired high-cover corner '+end);
+  for(let i=0;i<=24;i++){
+    const angle=end*2*Math.PI*i/24;
+    probe(`player.aimAngle=Math.atan2(Math.sin(${angle}),Math.cos(${angle}));
+      for(let i=0;i<8;i++){frameCount++;updateActorCover(player,1000/60,0,0,true);
+        if(${trackContacts})updateStanding3DContacts(player,0,0);}`);
+    const {pose,sockets,parts}=probe('player3DPose(player)'),forward=[Math.cos(pose.hipHeading),Math.sin(pose.hipHeading),0];
+    const hits=probe('buildHumanLegHitGeometry(player)');
+    const scale=probe('elevRenderScale(player.x,player.y)*shovelRenderScale(player)');
+    for(const [index,leg] of pose.legs.entries()){
+      const side=index?'right':'left',label='corner '+end+', sample '+i+', '+side+' leg';
+      const upper=delta(leg.knee,leg.hip),lower=delta(leg.ankle,leg.knee),axis=delta(leg.ankle,leg.hip);
+      const thigh=Math.hypot(...upper),shin=Math.hypot(...lower),t=dot(upper,axis)/dot(axis,axis);
+      const bend=upper.map((v,j)=>v-axis[j]*t);
+      assert.ok(dot(bend,forward)>.1,label+' knee flexes forward of the hip-to-ankle line');
+      assert.ok(dot(upper,lower)/(thigh*shin)<.9995,label+' retains knee flexion under load');
+      if(!coverLengths)coverLengths=[thigh,shin];
+      assert.ok(Math.abs(thigh-coverLengths[0])<.001&&Math.abs(shin-coverLengths[1])<.001,label+' keeps fixed XYZ bone lengths');
+      const hit=hits.legs[index];
+      assert.equal(hits.scale,scale);
+      for(const [joint,x,y] of [[leg.hip,hit.sx,hit.sy],[leg.knee,hit.kx,hit.ky],[leg.ankle,hit.ax,hit.ay]]){
+        assert.ok(Math.hypot(joint.x-x,joint.y-y)<.001,label+' leg contact matches the mesh');
+      }
+      const m=parts.find(part=>part.part==='foot_'+side).matrix;
+      for(let j=0;j<bootVertices.length;j+=3){
+        const x=m[0]*bootVertices[j]+m[4]*bootVertices[j+1]+m[8]*bootVertices[j+2]+m[12];
+        assert.ok(15+scale*x<30,label+' boot mesh clears the wall face');
+      }
+      const foot=delta(sockets[side+'Foot'],leg.ankle);
+      assert.ok(dot(foot,forward)>.65*Math.hypot(foot[0],foot[1]),label+' boot points forward in the pelvis frame');
+    }
+    coverSamples++;
+  }
+}
+console.log(samples+' standing gait samples, '+plantedFrames+' planted-foot comparisons and '+coverSamples+' high-cover poses passed');

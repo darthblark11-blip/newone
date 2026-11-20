@@ -137,6 +137,16 @@ function standing3DStep(phase, speed, size) {
     pitch:.38*arc*arc*Math.cos(Math.PI*swing),swing};
 }
 
+// In a peek the outside foot widens the support stance in the lean direction.
+function standing3DCoverFootTarget(stance,side,size,co,si) {
+  const {coverX,coverY,coverBlend}=stance;
+  const outside=Player3DMath.clamp(side*(-si*coverX+co*coverY)/COVER_LEAN_MAX);
+  const spread=side*(4.8+.8*coverBlend+1.9*outside)*size;
+  const stagger=side*2.2*size*coverBlend;
+  return {x:co*stagger-si*spread+.30*coverX*outside,
+    y:si*stagger+co*spread+.30*coverY*outside};
+}
+
 // Sample displacement after collision resolution, once per simulation update.
 // Store contacts in world space so a change of aim, speed or camera cannot
 // drag the supporting boot along. Rendering reads these contacts without
@@ -156,18 +166,25 @@ function updateStanding3DContacts(c,dx,dy) {
   const size=Player3DMath.clamp(c.bodyH/27,.86,1.18), speed=Player3DMath.clamp(c.gait);
   const scale=!fresh && dx===0 && dy===0?state.scale:elevRenderScale(c.x,c.y)*shovelRenderScale(c);
   const distance=Math.hypot(dx,dy)/scale;
-  const heading=c._standingMotion?.active?c._standingMotion.angle:crouchFacingTarget(c).angle;
+  const brace=c.isPlayer && c.cover?.kind==='HIGH' && stanceCoverPoseActive(c)?stanceBodyPose(c):null;
+  const heading=brace?stanceFacingAngle(c)+brace.hipYaw:
+    c._standingMotion?.active?c._standingMotion.angle:crouchFacingTarget(c).angle;
   const turn=Math.atan2(Math.sin(heading-state.heading),Math.cos(heading-state.heading));
   const stepDistance=2*(3.8+4.6*speed)*size/(.58-.13*speed);
-  state.phase+=(distance+Math.abs(turn)*4.6*size)/stepDistance;
+  const leanX=brace?.coverX||0,leanY=brace?.coverY||0;
+  const shift=brace ? .30*Math.hypot(leanX-(state.leanX||0),leanY-(state.leanY||0)):0;
+  state.phase+=(distance+Math.abs(turn)*4.6*size+shift)/stepDistance;
+  state.leanX=leanX;state.leanY=leanY;
   const yaw=Math.cos(heading), lateral=Math.sin(heading);
   const tx=distance>.001?dx/(distance*scale):0, ty=distance>.001?dy/(distance*scale):0;
   state.x=c.x;state.y=c.y;state.frame=frameCount;state.heading=heading;state.scale=scale;
   for(let i=0;i<2;i++) {
     const foot=state.feet[i], side=i?1:-1, step=standing3DStep(state.phase+i*.5,speed,size);
-    const moving=distance>.001 || Math.abs(turn)>.001;
+    const moving=distance>.001 || Math.abs(turn)>.001 || shift>.001;
     const room=(4.8*size)*side, advance=moving?step.along:0;
-    const x=c.x+scale*(tx*advance-lateral*room), y=c.y+scale*(ty*advance+yaw*room);
+    const target=brace?standing3DCoverFootTarget(brace,side,size,yaw,lateral):null;
+    const baseX=target?target.x:-lateral*room,baseY=target?target.y:yaw*room;
+    const x=c.x+scale*(tx*advance+baseX), y=c.y+scale*(ty*advance+baseY);
     if(fresh){foot.x=x;foot.y=y;foot.lift=0;foot.pitch=0;foot.heading=heading;}
     if(!moving) {
       // Complete a swing when travel stops mid-step. A planted sole stays put.
@@ -182,7 +199,7 @@ function updateStanding3DContacts(c,dx,dy) {
       // Predict where the root will be at touchdown. As direction changes
       // this free foot can re-aim while the support foot retains its contact.
       const lead=(1-step.swing)*(.42+.13*speed)*stepDistance+(3.8+4.6*speed)*size;
-      const endX=c.x+scale*(tx*lead-lateral*room),endY=c.y+scale*(ty*lead+yaw*room);
+      const endX=c.x+scale*(tx*lead+baseX),endY=c.y+scale*(ty*lead+baseY);
       foot.x=foot.fromX+(endX-foot.fromX)*ease;foot.y=foot.fromY+(endY-foot.fromY)*ease;
       foot.lift=step.lift;foot.pitch=step.pitch;foot.heading=heading;
     } else {
@@ -194,7 +211,7 @@ function updateStanding3DContacts(c,dx,dy) {
   c._standing3DContacts=state;
 }
 
-function standing3DLegs(c,p,motion,cycle,air) {
+function standing3DLegs(c,p,motion,cycle,air,coverStance=null) {
   const M=Player3DMath,size=M.clamp(c.bodyH/27,.86,1.18),speed=M.clamp(c.gait);
   const sampled=c._standing3DContacts;
   const track=sampled && sampled.frame===frameCount && sampled.x===c.x && sampled.y===c.y ? sampled:null;
@@ -204,18 +221,37 @@ function standing3DLegs(c,p,motion,cycle,air) {
   const thigh=8.35*size,shin=8.15*size, hipWidth=c.bodyH*.161;
   // A fixed upper/lower length pair and lateral sockets replace the sprite's
   // sliding hip origins. The small vertical drop leaves room to extend on load.
-  // The existing upper body calibrates its torso from the authored spine.
-  // Capture that length before replacing only the lower-body joints.
-  const spine=M.sub(p.head,p.pelvis);
-  p.torsoLength=Math.max(8,Math.hypot(spine.x,spine.y,spine.z)*.48);
-  p.pelvis=M.point(0,0,(16.55-.9*speed*motion)*size+air);
+  const brace=coverStance?.coverBlend||0;
+  const leanX=coverStance?.coverX||0,leanY=coverStance?.coverY||0;
+  // Carry part of the lean through the pelvis so the chest stays over its base
+  // of support. Load the knees slightly while the outside foot takes weight.
+  const lean=coverStance?Math.min(1,Math.hypot(leanX,leanY)/COVER_LEAN_MAX):0;
+  const height=16.55-.9*speed*motion-1.35*brace-.8*lean-6.2*(coverStance?.drop||0);
+  p.pelvis=M.point(.38*leanX,.38*leanY,height*size+air);
   p.articulatedStanding=true;
   for(let i=0;i<2;i++){
     const side=i?1:-1, foot=track?.feet[i], step=standing3DStep(phase+i*.5,speed,size);
     const hip=M.add(p.pelvis,M.mul(axes.y,side*hipWidth));
     const along=step.along*motion, sideOffset=side*4.8*size;
-    const x=foot?(foot.x-c.x)/track.scale:Math.cos(travel)*along+axes.y.x*sideOffset;
-    const y=foot?(foot.y-c.y)/track.scale:Math.sin(travel)*along+axes.y.y*sideOffset;
+    let x=foot?(foot.x-c.x)/track.scale:Math.cos(travel)*along+axes.y.x*sideOffset;
+    let y=foot?(foot.y-c.y)/track.scale:Math.sin(travel)*along+axes.y.y*sideOffset;
+    let bootHeading=foot?foot.heading:p.hipHeading;
+    if(coverStance) {
+      if(!foot) {
+        // Pose-only draws and crouched shuffles have no simulated contacts.
+        const target=standing3DCoverFootTarget(coverStance,side,size,axes.x.x,axes.x.y);
+        x=target.x+Math.cos(travel)*along;y=target.y+Math.sin(travel)*along;
+      }
+      const turn=p.hipHeading-bootHeading;
+      bootHeading+=brace*Math.atan2(Math.sin(turn),Math.cos(turn));
+      if(Number.isFinite(coverStance.wallGap)){
+        const {nx,ny}=c.cover;
+        // Include the forward offset of the boot mesh as well as its sole.
+        const soleRadius=Math.hypot(coverStance.R.foot*.75,coverStance.R.shinW*.6);
+        const inset=Math.max(0,soleRadius-coverStance.wallGap-nx*x-ny*y);
+        x+=nx*inset;y+=ny*inset;
+      }
+    }
     const lift=foot?foot.lift:step.lift*motion;
     const ankle=M.point(x,y,air+1.5*size+lift);
     // Avoid crossing the other foot on a lateral reversal, and limit the reach
@@ -224,15 +260,26 @@ function standing3DLegs(c,p,motion,cycle,air) {
     const across=M.dot(offset,axes.y);
     const lateral=side*Math.max(1.1*size,hipWidth+side*across)-side*hipWidth;
     const fore=M.dot(offset,axes.x);
-    const reach=Math.sqrt(Math.max(0,(thigh+shin-.02)**2-offset.z**2));
+    const maxReach=(thigh+shin)*(1-.016*brace)-.02;
+    const reach=Math.sqrt(Math.max(0,maxReach**2-offset.z**2));
     const k=Math.min(1,reach/(Math.hypot(fore,lateral)||1));
     ankle.x=hip.x+k*(axes.x.x*fore+axes.y.x*lateral);
     ankle.y=hip.y+k*(axes.x.y*fore+axes.y.y*lateral);
     const pole=M.add(hip,M.add(M.mul(axes.x,thigh),M.mul(axes.y,side*.07*thigh)));
     const knee=M.elbow(hip,ankle,thigh,shin,pole);
-    p.legs.push({hip,knee,ankle,heading:(foot?foot.heading:p.hipHeading)+side*.075,
+    p.legs.push({hip,knee,ankle,heading:bootHeading+side*.075,
       pitch:foot?foot.pitch:step.pitch*motion});
   }
+}
+
+// Both the mesh and its leg hit regions sample this pose in actor-relative
+// world axes. In particular neither knee depends on a projected sprite joint.
+function player3DHighCoverLegs(c,stance) {
+  if(!c.isPlayer || stance?.coverKind!=='HIGH' || stance.floor || c.mounted ||
+     c.legInjury || c.stunTimer>0 || c.shovelMantle || c.dead || c.isCorpse)return null;
+  const p={hipHeading:stanceFacingAngle(c)+stance.hipYaw,legs:[]};
+  standing3DLegs(c,p,Number(!!c.isMoving),c.walkCycle||0,c.jetpackHeight||0,stance);
+  return p;
 }
 
 function player3DPose(actor, options = {}) {
@@ -339,8 +386,14 @@ function player3DPose(actor, options = {}) {
       const articulated=!stance && !c.mounted && mode==='NORMAL' && !c.stunTimer && !c.shovelMantle &&
         !c.legInjury && !c.dead && !c.isCorpse && !safe(()=>tool==='SHOVEL'&&shovelDigPose(c,gait,0),false);
       const legGeometry=!articulated && !stance ? safe(()=>buildHumanLegHitGeometry(c),null) : null;
-      if(articulated)standing3DLegs(c,p,motion,cycle,air);
-      else if(stance&&stance.joints) {
+      const coverLegs=mode==='NORMAL' && stance && player3DHighCoverLegs(c,stance);
+      if(articulated || coverLegs) {
+        // Torso proportions are calibrated before the anatomical hip sockets move.
+        const spine=sub(p.head,p.pelvis);
+        p.torsoLength=Math.max(8,Math.hypot(spine.x,spine.y,spine.z)*.48);
+        if(coverLegs)Object.assign(p,coverLegs);
+        else standing3DLegs(c,p,motion,cycle,air);
+      } else if(stance&&stance.joints) {
         p.legs=stance.joints.map(j=>({hip:local(j.hip.x,j.hip.y,p.pelvis.z),
           knee:local(j.knee.x,j.knee.y,Math.max(2,6*(1-crouch))*(1-.65*floor)+air),
           ankle:local(j.ankle.x,j.ankle.y,1+air),heading:heading+Math.atan2(j.ankle.y-j.knee.y,j.ankle.x-j.knee.x),step:j.step,
