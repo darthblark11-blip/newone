@@ -362,7 +362,11 @@ def sidearm_geometry(name):
         g.vertices=[(min(x,muzzle-.30),y,z) for x,y,z in g.vertices]
     g.vertices=[((x-center)/span,y/span,(z-bore_z)/span) for x,y,z in g.vertices]
     if model.get('crown'):
+        # The original mount is on the bore line. Mark the hand separately
+        # on the modeled handle, just to the outside of its centerline.
+        palm_x,palm_z=(-.45,-4.6) if name=='pistol' else (-5,-3.75)
         SOCKETS[name]={'grip':[round(-center/span,6),0,0],'muzzle':[.5,0,0],
+                       'palmGrip':[round((palm_x-center)/span,6),round(1.15/span,6),round((palm_z-bore_z)/span,6)],
                        'actionTravel':round(model['actionTravel']/span,6),
                        'magazineTravel':round(model['magazineTravel']/span,6)}
     elif name.endswith('_magazine'):

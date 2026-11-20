@@ -974,6 +974,29 @@ function player3DPose(actor, options = {}) {
       const weaponMatrix=M.matrix(center,axis,side,upAxis,length,length,length);
       addWeaponMesh(name,weaponMatrix,tag);
       if(sidearm){
+        // The native hand target is on the bore line. Bind the visible palm
+        // to the handle beneath it; the trigger-side and off-hand grips mirror.
+        const handSide=record.index?'left':'right',arm=arms[record.index?0:1];
+        const socket=bodyMesh.palmGrip;
+        const palm=add(center,add(mul(axis,socket[0]*length),
+          add(mul(side,socket[1]*length*(record.index?-1:1)),mul(upAxis,socket[2]*length))));
+        if(arm)arm.fist=palm;
+        sockets[handSide+'Hand']=sockets[handSide+'Fist']=palm;
+        const skin=parts.find(part=>part.part==='hand_'+handSide);
+        if(skin){
+          const m=skin.matrix;
+          skin.matrix=M.matrix(palm,axis,side,upAxis,Math.hypot(m[0],m[1],m[2]),
+            Math.hypot(m[4],m[5],m[6]),Math.hypot(m[8],m[9],m[10]));
+        }
+        const sleeve=parts.find(part=>part.part==='forearm_'+handSide);
+        if(arm && sleeve){
+          // The cuff meets the near edge of the fist. A sleeve ending at the
+          // center of the hand protrudes through the back of a recoiling slide.
+          const back=sub(arm.elbow,palm),reach=Math.hypot(back.x,back.y,back.z);
+          const cuff=add(palm,mul(back,Math.min(.55,(arm.handDiameter||R.hand)*widthScale*.35/(reach||1))));
+          const width=R.foreW*(arm.widths?arm.widths[0]/R.upperW:1)*widthScale;
+          sleeve.matrix=M.segment(arm.elbow,cuff,width);
+        }
         // The body, slide/bolt and magazine use the same Blender origin.
         // Move the visible action along the mounted gun's axis on each shot.
         const phase=reload!==null?handGunReloadMechanism(c.currentWeapon,reload,record.index||0):null;

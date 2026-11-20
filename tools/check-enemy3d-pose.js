@@ -31,6 +31,13 @@ function fresh(type,weapon,angle,stance='STAND',reload=0){
   enemy.meleeTimer=enemy.dashTimer=enemy.muzzleFlash=enemy.hitFlash=enemy.weaponKick=0;enemy.reloadTimer=${reload};
   resetActorStance(enemy,${JSON.stringify(stance)});frameCount++;`);
 }
+// Native wrists are aiming targets. The rendered sidearm hand sits on its
+// Blender handle, whose mesh depth is checked in check-player3d-support-hand.
+function nativeWrist(pose,index){
+ const gun=pose.parts.find(part=>part.part===(index?'weapon_primary':'weapon_secondary'));
+ if(gun&&['pistol','smg'].includes(gun.mesh))return pose.sockets[index?'primaryGrip':'secondaryGrip'];
+ return pose.sockets[index?'rightHand':'leftHand'];
+}
 function nativeTrace(){
  const old={},stack=[],limbs=[],heads=[];let m=[1,0,0,1,0,0];
  const save=()=>stack.push(m.slice()),restore=()=>{assert.ok(stack.length);m=stack.pop();};
@@ -64,7 +71,7 @@ for(const weapon of ['PISTOL','SMG','DUAL_SMG','ASSAULT_RIFLE','SHOTGUN','PARTIC
   close(pose.sockets.head,trace.head,weapon+'/'+stance+' native head');
   ok(trace.arms.length===2,weapon+'/'+stance+' native arms recorded');
   for(let i=0;i<2;i++)for(const [socket,key] of [['Shoulder','shoulder'],['Elbow','elbow'],['Hand','hand']])
-   close(pose.sockets[(i?'right':'left')+socket],trace.arms[i][key],weapon+'/'+stance+' '+key);
+   close(socket==='Hand'?nativeWrist(pose,i):pose.sockets[(i?'right':'left')+socket],trace.arms[i][key],weapon+'/'+stance+' '+key);
   if(stance==='STAND')ok(Math.abs(pose.pose.hipHeading-P('standingLowerPose(enemy).angle'))<1e-8,'native independent hip heading');
  }
 // Outfit colors remain enemy identity, including steel damage thresholds.
@@ -99,7 +106,7 @@ for(const weapon of ['PISTOL','ASSAULT_RIFLE'])for(const reload of [15,45,75]){
  fresh('NORMAL',weapon,.7,'STAND',reload);probe('enemy.shirtCol=color(84,104,124)');
  const trace=nativeTrace(),before=P('JSON.stringify(enemy)'),pose=P('player3DPose(enemy)');
  ok(P('JSON.stringify(enemy)')===before,'enemy reload pose is read only');
- for(let i=0;i<2;i++)close(pose.sockets[(i?'right':'left')+'Hand'],trace.arms[i].hand,'NPC native reload wrist');
+ for(let i=0;i<2;i++)close(nativeWrist(pose,i),trace.arms[i].hand,'NPC native reload wrist');
 }
 fresh('MOLOTOV','PISTOL',.7);pose=P('player3DPose(enemy)');
 ok(pose.parts.some(p=>p.part==='held_molotov'&&p.mesh==='flask'&&same(p.color,[30,120,30])),'molotov enemy holds its green bottle');

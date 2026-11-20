@@ -134,7 +134,10 @@ function compare(label,{stance='STAND'}={}){
   const side=i?'right':'left',a=arms[i];
   pointCheck(s[side+'Shoulder'],a.shoulder,label+' '+side+' shoulder');
   pointCheck(s[side+'Elbow'],a.elbow,label+' '+side+' elbow');
-  pointCheck(s[side+'Hand'],a.hand,label+' '+side+' wrist');
+  const gun=snapshot.parts.find(part=>part.part===(i?'weapon_primary':'weapon_secondary'));
+  const heldSidearm=gun&&asset.meshes[gun.mesh].palmGrip;
+  const wristTarget=heldSidearm?s[i?'primaryGrip':'secondaryGrip']:s[side+'Hand'];
+  pointCheck(wristTarget,a.hand,label+' '+side+' native wrist target');
   const upper=snapshot.parts.find(p=>p.part==='upper_arm_'+side),fore=snapshot.parts.find(p=>p.part==='forearm_'+side);
   if(upper&&fore){
    const upperWidth=transformedWidth(upper,asset.meshes[upper.mesh]),foreWidth=transformedWidth(fore,asset.meshes[fore.mesh]);
@@ -144,7 +147,18 @@ function compare(label,{stance='STAND'}={}){
   const hand=snapshot.parts.find(p=>p.part==='hand_'+side);
   const nativeHand=native.hands.find(h=>close(h.center,a.hand));
   check(!!nativeHand,label+' '+side+' has an original palm reference');
-  if(hand&&nativeHand)compareOval(hand,nativeHand,label+' '+side+' hand');
+  if(hand&&nativeHand){
+   if(heldSidearm){
+    // The grasp tilts with the handle. Measure its length and width in the
+    // hand's own axes so foreshortening cannot read as a loss of volume.
+    const vertices=asset.meshes[hand.mesh].positions,m=hand.matrix,ref=nativeHand.matrix;
+    for(const [axis,expected] of [[0,nativeHand.width*Math.hypot(ref[0],ref[1])],[1,nativeHand.height*Math.hypot(ref[2],ref[3])]]){
+     const coordinates=vertices.filter((_,idx)=>idx%3===axis),k=axis*4;
+     const span=(Math.max(...coordinates)-Math.min(...coordinates))*Math.hypot(m[k],m[k+1],m[k+2]);
+     check(span>=expected*.88&&span<=expected*1.12,label+' '+side+' grasp retains native palm size on axis '+axis);
+    }
+   }else compareOval(hand,nativeHand,label+' '+side+' hand');
+  }
  }
  native.boots.slice(0,2).forEach((boot,i)=>{const side=i?'right':'left',part=snapshot.parts.find(p=>p.part==='foot_'+side);
   check(!!part,label+' '+side+' has a boot mesh');

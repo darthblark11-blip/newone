@@ -71,4 +71,60 @@ for(const weapon of ['PISTOL','BOW','DUAL_SMG']){
  setup(weapon,'STAND',.7,1,0);const pose=P('player3DPose(player)');
  ok(!pose.sockets.supportGrip,weapon+' does not use long-gun support-depth correction');
 }
+// Look straight down onto each sidearm's slide/receiver in its own frame.
+// A hand may wrap the grip below it; neither a knuckle nor a uniform sleeve
+// may punch a coloured hole through the top when the wrist rolls or recoils.
+function inGunFrame(part,gun) {
+ const surface=projected(part),m=gun.matrix,sc2=m[0]**2+m[1]**2+m[2]**2;
+ surface.points=surface.points.map(p=>[0,4,8].map(k=>(
+  (p[0]-m[12])*m[k]+(p[1]-m[13])*m[k+1]+(p[2]-m[14])*m[k+2])/sc2));
+ return surface;
+}
+let sidearmCases=0,sidearmRays=0,penetrations=0,worst=0,worstCase='';
+for(const weapon of ['PISTOL','SMG','DUAL_SMG'])
+ for(const [stance,angle,raise,kick,reload=0] of [
+  ['STAND',0,0,0],['STAND',-.85,.5,3],['STAND',-1.4,1,0],['STAND',-1.4,1,6],
+  ['STAND',2.6,1,6],['CROUCH',1.25,1,0],['PRONE',-2.1,1,6],
+  ['STAND',Math.PI,1,0,45],['STAND',Math.PI/2,1,0,12]]){
+  setup(weapon,stance,angle,raise,reload);
+  probe(`player.weaponKick=${kick};`);
+  const pose=P('player3DPose(player)');
+  for(const index of weapon==='DUAL_SMG'?[0,1]:[0]){
+   const tag=index?'weapon_secondary':'weapon_primary',side=index?'left':'right';
+   const gun=pose.parts.find(p=>p.part===tag);
+   const slide=weapon==='PISTOL'?pose.parts.find(p=>p.mesh==='pistol_slide'):gun;
+   const casing=inGunFrame(slide,gun), skin=pose.parts.filter(p=>p.part==='hand_'+side||p.part==='forearm_'+side).map(p=>inGunFrame(p,gun));
+   const m=gun.matrix,scale=Math.hypot(m[0],m[1],m[2]);
+   const [gx,gy,gz]=asset.meshes[gun.mesh].palmGrip,palm=pose.parts.find(p=>p.part==='hand_'+side);
+   const wrist=pose.sockets[side+'Hand'];
+   ok(m[10]>0&&gz<0&&gy>0,weapon+'/'+stance+' has its top facing up and its handle beneath the action');
+   for(const [k,key] of ['x','y','z'].entries()){
+    const target=m[12+k]+gx*m[k]+(index?-gy:gy)*m[4+k]+gz*m[8+k];
+    ok(Math.abs(palm.matrix[12+k]-target)<.001&&Math.abs(wrist[key]-target)<.001,
+     weapon+'/'+stance+' '+side+' palm and wrist meet Blender grip on '+key);
+   }
+   // Cover the solid top of the action, from its back to the barrel. The
+   // magazine, open trigger guard and grip are intentionally outside this band.
+   const slideOffset=[0,1,2].reduce((offset,k)=>offset+(slide.matrix[12+k]-m[12+k])*m[k],0)/(scale*scale);
+   const xMin=-.48+slideOffset,xMax=(weapon==='PISTOL'?.40:.31)+slideOffset;
+   for(let i=0;i<15;i++)for(let j=0;j<7;j++){
+    const x=xMin+(xMax-xMin)*i/14,y=(j-3)*.034;
+    const top=depths(casing,x,y)[1];
+    if(!Number.isFinite(top))continue;
+    for(const limb of skin){
+     const hi=depths(limb,x,y)[1];
+     if(!Number.isFinite(hi))continue;
+     sidearmRays++;
+     if(hi>top+.001){
+      penetrations++;
+      if((hi-top)*scale>worst){worst=(hi-top)*scale;worstCase=[weapon,stance,angle,raise,kick,side].join('/');}
+     }
+    }
+   }
+   sidearmCases++;
+  }
+ }
+ok(sidearmRays>100,'sidearm checks sample the holding forearm and palm against the action');
+ok(penetrations===0,`sidearm top pierced on ${penetrations}/${sidearmRays} overlapping rays, worst ${worst.toFixed(2)} units at ${worstCase}`);
+console.log(sidearmCases+' sidearm grip poses passed');
 console.log(checks+' support-hand mesh-depth, native-XY, muzzle and purity checks passed across '+cases+' poses ('+overlapCases+' overlapping)');
