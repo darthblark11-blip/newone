@@ -53,6 +53,16 @@ the native weapon art changes. Both the grip and muzzle are transformed into
 the exported mesh coordinates, retaining the original buttstock and barrel
 dimensions instead of estimating them from a second weapon model.
 
+The pistol slide and SMG charging handle follow the shot timer. Both weapons have separate magazines for reloads. [Watch the in-game firing preview](../../docs/previews/pistol-smg.webp).
+
+To refresh the pistol and SMG from their original animated artwork, run these commands in the repository root. Blender updates the fixed body, slide or charging handle, and magazine in the existing scene. The three parts share a single coordinate frame. The pistol-equipped armored soldier GLB is refreshed with the assembled prop.
+
+```sh
+node tools/extract-player3d-weapons.cjs
+blender --background assets/player/player.blend --python-exit-code 1 --python tools/blender-player.py -- --update-sidearms
+python3 tools/build-player3d.py
+```
+
 Add `-- --skip-renders` to rebuild models and data without rendering the previews.
 Validation runs during export. To validate an existing runtime asset:
 

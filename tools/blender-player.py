@@ -2,7 +2,7 @@
 """Deterministically build the game's editable cel-shaded 3D player.
 
 Run: blender --background --factory-startup --python tools/blender-player.py
-Options after --: --skip-renders, --validate-only, --export-existing
+Options after --: --skip-renders, --validate-only, --export-existing, --update-sidearms
 Export manual edits without rebuilding:
   blender --background assets/player/player.blend --python tools/blender-player.py -- --export-existing
 Refresh just the portable soldier variants and their previews:
@@ -42,12 +42,16 @@ PALETTE = {
 MATERIALS = {}
 LIBRARY = {}
 SOURCE = []
+SIDEARM_PARTS = {
+    'pistol': ('pistol_slide', 'pistol_magazine'),
+    'smg': ('smg_bolt', 'smg_magazine'),
+}
 SOCKETS = {}
 NATIVE_WEAPONS = {}
 
 
 def load_native_weapons():
-    """The game's own authored solids are the long-gun model source."""
+    """Read the authored game geometry and its palette."""
     path=ROOT/'assets/player/native-weapons.json'
     if not path.exists():
         raise RuntimeError('Run node tools/extract-player3d-weapons.cjs before building the Blender player')
@@ -56,6 +60,8 @@ def load_native_weapons():
         raise RuntimeError('Unsupported native weapon source schema')
     NATIVE_WEAPONS.update(data['models'])
     for model in NATIVE_WEAPONS.values():
+        if 'frame' in model:
+            continue  # Sidearms reuse the existing long-gun palette.
         for item in model['boxes']+model['details']:
             rgb=item['color']
             PALETTE['native_rgb_'+''.join(f'{int(c):02x}' for c in rgb)]=[c/255 for c in rgb]
@@ -273,6 +279,99 @@ def army_platecarrier_geometry():
     return geometry
 
 
+def sidearm_geometry(name):
+    """All three draw parts share the same grip-to-muzzle normalization."""
+    model = NATIVE_WEAPONS[name]
+    rear, muzzle, bore_z = model['frame']
+    span = muzzle-rear
+    center = (muzzle+rear)*.5
+    # Four values read separately in the small top-down sprite and batch all
+    # serrations, vents and sight glints by material.
+    dark, body, rail, light = ('native_rgb_'+rgb for rgb in
+                               ('1d1f24','3a414b','4e5e6f','97abbd'))
+    def material(rgb):
+        value = rgb[1]
+        return dark if value < 45 else body if value < 72 else rail if value < 113 else light
+
+    g = Geometry()
+    for box in model['boxes']:
+        x0,x1,y0,y1,z0,z1 = box['bounds']
+        g.box(((x0+x1)/2,(y0+y1)/2,(z0+z1)/2), (x1-x0,y1-y0,z1-z0),
+              material(box['color']), bevel=.08)
+    for line in model['details']:
+        g.rod(line['a'],line['b'],line['width']*.5,material(line['color']),6)
+    # Raked rings give the lower pistol a readable side silhouette and a
+    # narrower waist behind the guard while keeping the top view compact.
+    def grip_sections(rings,mat):
+        vertices=[]
+        for x,z,depth,width in rings:
+            vertices.extend((x+u*depth,v*width,z) for u,v in
+                            ((1,.70),(.80,1),(-.80,1),(-1,.70),
+                             (-1,-.70),(-.80,-1),(.80,-1),(1,-.70)))
+        faces=[tuple(reversed(range(8))),tuple(range(len(vertices)-8,len(vertices)))]
+        for j in range(len(rings)-1):
+            for k in range(8):
+                a=j*8+k;b=j*8+(k+1)%8;faces.append((a,b,b+8,a+8))
+        g.add(vertices,faces,mat)
+    if name == 'pistol':
+        grip_sections([(-1.22,-8.45,2.30,1.94),(-1.05,-7.54,2.2,1.98),
+                       (.15,-3.25,2.03,1.96),(.78,-.7,2.38,2.15)],dark)
+        grip_sections([(-1.23,-8.75,2.46,2.04),(-1.13,-7.96,2.47,2.08)],dark)
+        # Shallow grip panels are visible around the holding hand at oblique
+        # angles. Their bevels use the same muted steel tone as the frame edge.
+        for side in (-1,1):
+            plate=[(-2.4,-7.49),(.36,-7.3),(1.73,-2.46),(-1.02,-2.76)]
+            g.add([(x,side*2.0,z) for x,z in plate],
+                  [(3,2,1,0) if side>0 else (0,1,2,3)],rail)
+        # A single extruded band leaves a real opening underneath the frame.
+        edge=[(1.72,-5.75),(6.05,-5.52),(7.71,-4.29),(8.36,-.68),
+              (7.23,-.68),(6.78,-3.68),(5.59,-4.45),(1.93,-4.64)]
+        n=len(edge)
+        vertices=[(x,y,z) for y in (-.83,.83) for x,z in edge]
+        faces=[tuple(range(n)),tuple(reversed(range(n,2*n)))]
+        faces.extend((i,i+n,(i+1)%n+n,(i+1)%n) for i in range(n))
+        g.add(vertices,faces,dark)
+    elif name == 'pistol_magazine':
+        # The original top-down drawing shows only the exposed plate. Give
+        # the loose magazine a body, nested inside the grip when seated.
+        grip_sections([(-1.18,-8.92,2.19,1.82),(-1.06,-8.32,2.18,1.81),
+                       (.94,-1.01,1.60,1.44)],dark)
+    elif name == 'smg_magazine':
+        g.box((-1.75,0,-11.8),(4.88,3.72,.79),dark)
+    if name == 'smg':
+        # The moving side tab also catches light from above in the top view.
+        g.box((4.2,2.57,3.57),(7.1,1.55,.18),dark)
+    elif name == 'smg_bolt':
+        g.box((6.0,3.04,3.75),(2.08,1.95,.42),light)
+    if model.get('crown'):
+        # Inset the fixed front face so the crown and dark aperture remain
+        # visible when the upper assembly travels rearward.
+        for i,(x,y,z) in enumerate(g.vertices):
+            if abs(x-muzzle)<.0001:
+                g.vertices[i]=(x-.28,y,z)
+        radius = 1.16 if name=='pistol' else 1.26
+        ring=[(muzzle,radius*math.cos(i*math.tau/8),
+               bore_z+radius*math.sin(i*math.tau/8)) for i in range(8)]
+        g.add([(muzzle-.28,y,z) for _,y,z in ring]+ring,
+              [(i,(i+1)%8,8+(i+1)%8,8+i) for i in range(8)],rail)
+        inset=[(muzzle,y*.58,bore_z+(z-bore_z)*.58) for _,y,z in ring]
+        g.add(ring+inset,[(i,(i+1)%8,8+(i+1)%8,8+i) for i in range(8)],light)
+        g.add(inset+[(muzzle,0,bore_z)],[(i,(i+1)%8,8) for i in range(8)],dark)
+    if name == 'pistol_slide':
+        # Give the fixed crown a sliver of clearance at the closed slide face.
+        g.vertices=[(min(x,muzzle-.30),y,z) for x,y,z in g.vertices]
+    g.vertices=[((x-center)/span,y/span,(z-bore_z)/span) for x,y,z in g.vertices]
+    if model.get('crown'):
+        SOCKETS[name]={'grip':[round(-center/span,6),0,0],'muzzle':[.5,0,0],
+                       'actionTravel':round(model['actionTravel']/span,6),
+                       'magazineTravel':round(model['magazineTravel']/span,6)}
+    elif name.endswith('_magazine'):
+        x0,x1,y0,y1,z0,z1 = model['boxes'][0]['bounds']
+        SOCKETS[name]={'grip':[round(((x0+x1)/2-center)/span,6),
+                               round((y0+y1)/2/span,6),round(((z0+z1)/2-bore_z)/span,6)]}
+    return g
+
+
 def make_library(collection):
     geometries={}
     # A round, featureless silhouette in every view, including fallen bodies.
@@ -360,7 +459,10 @@ def make_library(collection):
             g.box((.35,0,.135),(.035,.035,.05),'ink')
         return g
     for name in ['pistol','revolver','smg','rifle','shotgun','coach_gun','rocket','bow','taser','particle_beam']:
-        if name in NATIVE_WEAPONS:
+        if name in SIDEARM_PARTS:
+            for part in (name,*SIDEARM_PARTS[name]):
+                geometries[part]=sidearm_geometry(part)
+        elif name in NATIVE_WEAPONS:
             model=NATIVE_WEAPONS[name];geometry=Geometry()
             for box in model['boxes']:
                 x0,x1,y0,y1,z0,z1=box['bounds']
@@ -383,7 +485,7 @@ def make_library(collection):
     geometries['torso_cap']=Geometry().loft([(-.015,.85,.52),(.015,.85,.52)],'blood',sides=16,smooth=False)
     for name,geometry in geometries.items():
         weapons={'pistol','revolver','smg','rifle','shotgun','coach_gun','rocket','bow','taser','particle_beam','sword','pickaxe','shovel','cannon'}
-        if name in weapons:
+        if name in weapons and name not in SIDEARM_PARTS:
             lo=min(v[0] for v in geometry.vertices);hi=max(v[0] for v in geometry.vertices)
             span=hi-lo;center=(hi+lo)*.5
             if name in NATIVE_WEAPONS:
@@ -470,7 +572,8 @@ def assemble(body_collection,equipment_collection):
     for i,name in enumerate(['pistol','revolver','smg','rifle','shotgun','coach_gun','rocket','bow','taser','particle_beam','sword','pickaxe','shovel','cannon','grenade','flask']):
         # Park optional equipment in an organized hidden collection; all are
         # editable and exportable without cluttering the default silhouette.
-        source_part('Equipment '+name,name,(.22,-.42,.76),(.40,.40,.40),bone='hand.R',visible=False,collection=equipment_collection)
+        for part in (name,*SIDEARM_PARTS.get(name,())):
+            source_part('Equipment '+part,part,(.22,-.42,.76),(.40,.40,.40),bone='hand.R',visible=False,collection=equipment_collection)
     for obj in SOURCE:
         group=obj.vertex_groups.new(name=obj['bone']);group.add(list(range(len(obj.data.vertices))),1.0,'REPLACE')
         modifier=obj.modifiers.new('Player skin','ARMATURE');modifier.object=rig
@@ -505,25 +608,28 @@ def assemble(body_collection,equipment_collection):
     return rig
 
 
+def compact_mesh(obj):
+    mesh=obj.data;mesh.calc_loop_triangles()
+    positions=[];normals=[];indices=[];groups=[]
+    # Group by material for small, contiguous uniform-color draw batches.
+    material_indices=sorted(set(t.material_index for t in mesh.loop_triangles))
+    for material_index in material_indices:
+        start=len(indices)
+        for triangle in mesh.loop_triangles:
+            if triangle.material_index!=material_index:continue
+            for vi in triangle.vertices:
+                vertex=mesh.vertices[vi];normal=vertex.normal if mesh.polygons[triangle.polygon_index].use_smooth else triangle.normal
+                positions.extend(round(v,6) for v in vertex.co)
+                normals.extend(round(v,6) for v in normal)
+                indices.append(len(indices))
+        groups.append({'start':start,'count':len(indices)-start,'material':mesh.materials[material_index].name})
+    result={'positions':positions,'normals':normals,'indices':indices,'material':groups[0]['material'],'materialGroups':groups}
+    result.update(json.loads(obj.get('runtimeSockets','{}')))
+    return result
+
+
 def export_compact():
-    meshes={}
-    for name,obj in LIBRARY.items():
-        mesh=obj.data;mesh.calc_loop_triangles()
-        positions=[];normals=[];indices=[];groups=[]
-        # Group by material for small, contiguous uniform-color draw batches.
-        material_indices=sorted(set(t.material_index for t in mesh.loop_triangles))
-        for material_index in material_indices:
-            start=len(indices)
-            for triangle in mesh.loop_triangles:
-                if triangle.material_index!=material_index:continue
-                for vi in triangle.vertices:
-                    vertex=mesh.vertices[vi];normal=vertex.normal if mesh.polygons[triangle.polygon_index].use_smooth else triangle.normal
-                    positions.extend(round(v,6) for v in vertex.co)
-                    normals.extend(round(v,6) for v in normal)
-                    indices.append(len(indices))
-            groups.append({'start':start,'count':len(indices)-start,'material':mesh.materials[material_index].name})
-        meshes[name]={'positions':positions,'normals':normals,'indices':indices,'material':groups[0]['material'],'materialGroups':groups}
-        meshes[name].update(json.loads(obj.get('runtimeSockets','{}')))
+    meshes={name:compact_mesh(obj) for name,obj in LIBRARY.items()}
     result={'schemaVersion':1,'axis':'+X forward, +Y lateral, +Z up',
             'normalization':'limbs x=-0.5..0.5; head/torso/pelvis/hand/joint unit radius; weapons authored around their grip',
             'palette':{name:[round(c,6) for c in rgb] for name,rgb in PALETTE.items()},'toon':{'thresholds':[.38,.70],'bands':[.44,.76,1.0]},'meshes':meshes}
@@ -534,6 +640,7 @@ def export_compact():
 
 def validate(data):
     required={'head','torso','pelvis','upper_arm','forearm','hand','joint','thigh','shin','foot','helmet','hood','cowboy_hat','vest','coat','jetpack','pistol','revolver','smg','rifle','shotgun','rocket','bow','sword','pickaxe','shovel','cannon'}
+    required.update(part for parts in SIDEARM_PARTS.values() for part in parts)
     assert data['schemaVersion']==1 and required<=data['meshes'].keys()
     for name,mesh in data['meshes'].items():
         p,n,ix=mesh['positions'],mesh['normals'],mesh['indices']
@@ -716,7 +823,7 @@ def export_helmet_variant(rig):
         helmet.hide_render,helmet.hide_viewport,hide_set=hidden;helmet.hide_set(hide_set)
 
 
-def export_soldier_variants(rig,render=False):
+def export_soldier_variants(rig,render=False,only_weapon=None):
     """The same bone-attached kit pieces are portable worn Blender variants."""
     scene=bpy.context.scene
     visibility={obj.name:(obj.hide_render,obj.hide_viewport,obj.hide_get()) for obj in SOURCE}
@@ -727,10 +834,11 @@ def export_soldier_variants(rig,render=False):
     try:
         for kit,weapon,filename in [('army_webbing','rifle','nm0-grey-soldier'),
                                     ('army_platecarrier','pistol','nm0-armored-soldier')]:
+            if only_weapon and weapon!=only_weapon:continue
             heavy=kit=='army_platecarrier'
             for obj in SOURCE:
                 semantic=obj['semantic']
-                visible=bool(obj.get('variantVisible')) or semantic in [kit,'helmet',weapon] or obj.get('soldierKit')==kit
+                visible=bool(obj.get('variantVisible')) or semantic in [kit,'helmet',weapon,*SIDEARM_PARTS.get(weapon,())] or obj.get('soldierKit')==kit
                 obj.hide_render=not visible;obj.hide_viewport=not visible;obj.hide_set(not visible)
                 for slot in obj.material_slots:
                     original=next(material for saved,material in materials if saved==slot)
@@ -755,8 +863,50 @@ def export_soldier_variants(rig,render=False):
         scene.render.filepath=render_path
 
 
+def update_sidearms(rig,library):
+    """Replace only the two equipment assemblies in the existing editable scene."""
+    runtime_path=OUT/'player-mesh.json'
+    runtime=json.loads(runtime_path.read_text())
+    for name,extras in SIDEARM_PARTS.items():
+        mount=next(obj for obj in SOURCE if obj['semantic']==name)
+        for part in (name,*extras):
+            tmp=mesh_object('Weapon rebuild',sidearm_geometry(part),library)
+            if part in LIBRARY:
+                obj=LIBRARY[part]
+                previous=obj.data;obj.data=tmp.data
+                bpy.data.objects.remove(tmp,do_unlink=True)
+                if not previous.users:bpy.data.meshes.remove(previous)
+            else:
+                obj=tmp;obj.name=part;LIBRARY[part]=obj
+            obj.data.name=part+' library mesh'
+            obj.hide_render=obj.hide_viewport=True
+            obj['runtimeSockets']=json.dumps(SOCKETS.get(part,{}))
+            editable=next((obj for obj in SOURCE if obj['semantic']==part),None)
+            if editable is None:
+                editable=mount.copy();mount.users_collection[0].objects.link(editable)
+                editable.name='Equipment '+part;editable['semantic']=part;SOURCE.append(editable)
+            previous=editable.data;editable.data=obj.data.copy()
+            if not previous.users:bpy.data.meshes.remove(previous)
+            editable.data.name=part+' equipment mesh'
+            group=editable.vertex_groups.get(mount['bone']) or editable.vertex_groups.new(name=mount['bone'])
+            group.add(list(range(len(editable.data.vertices))),1.0,'REPLACE')
+            editable.data.materials.append(MATERIALS['ink'])
+            outline=next((mod for mod in editable.modifiers if mod.type=='SOLIDIFY'),None)
+            if outline:
+                outline.material_offset=outline.material_offset_rim=len(editable.data.materials)-1
+            runtime['meshes'][part]=compact_mesh(obj)
+    validate(runtime)
+    export_soldier_variants(rig,only_weapon='pistol')
+    bpy.ops.wm.save_as_mainfile(filepath=str(OUT/'player.blend'))
+    runtime_path.write_text(json.dumps(runtime,separators=(',',':'))+'\n')
+    manifest_path=OUT/'manifest.json'
+    manifest=json.loads(manifest_path.read_text());manifest['meshCount']=len(runtime['meshes'])
+    manifest_path.write_text(json.dumps(manifest,indent=2)+'\n')
+
+
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--skip-renders',action='store_true');parser.add_argument('--validate-only',action='store_true');parser.add_argument('--export-existing',action='store_true');parser.add_argument('--soldier-variants-only',action='store_true')
+    parser.add_argument('--update-sidearms',action='store_true',help='Rebuild the pistol and SMG in the loaded player.blend')
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     if args.soldier_variants_only and not args.export_existing:
         parser.error('--soldier-variants-only requires --export-existing and the editable player.blend')
@@ -765,7 +915,7 @@ def main():
     load_native_weapons()
     OUT.mkdir(parents=True,exist_ok=True)
     bpy.context.preferences.filepaths.save_version=0
-    if args.export_existing:
+    if args.export_existing or args.update_sidearms:
         for name in PALETTE:
             material=bpy.data.materials.get(name) or toon_material(name,PALETTE[name]);MATERIALS[name]=material
             if material and material.use_nodes:
@@ -777,6 +927,8 @@ def main():
         SOURCE.extend(obj for obj in bpy.data.objects if obj.type=='MESH' and 'semantic' in obj)
         rig=bpy.data.objects.get('PlayerRig')
         if not rig:raise RuntimeError('PlayerRig is missing from the editable source')
+        if args.update_sidearms:
+            update_sidearms(rig,library);return
         if args.soldier_variants_only:
             validate_scene(rig);export_soldier_variants(rig,not args.skip_renders)
             print('SOLDIER_VARIANTS_READY',str(OUT));return

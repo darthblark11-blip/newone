@@ -282,6 +282,14 @@ function player3DHighCoverLegs(c,stance) {
   return p;
 }
 
+// Mounted model scale shared with the cheap projectile-height query.
+function player3DWeaponLength(name,socketSpan) {
+  if(name==='pistol')return 15/socketSpan;
+  if(name==='smg')return 16/socketSpan;
+  if(['rifle','shotgun','coach_gun','particle_beam'].includes(name))return 49;
+  return name==='rocket'?57:name==='bow'?40:name==='revolver'?32:24;
+}
+
 function player3DPose(actor, options = {}) {
   if(!actor)return null;
   const M=Player3DMath,{point,add,sub,mul,mix,rotate,clamp}=M;
@@ -430,7 +438,7 @@ function player3DPose(actor, options = {}) {
         }).sort((a,b)=>a.side-b.side);
         weaponRecords=presentation.weapons.map(g=>({hand:rotatePoint(g.x+bobX,g.y,gunHeight*(.58+.42*presentation.t)+air,a),
           muzzle:rotatePoint(g.muzzle.x+bobX,g.muzzle.y,gunHeight*(.58+.42*presentation.t)+Math.sin(g.elevation||0)*20+air,a),
-          heading:g.heading,elevation:g.elevation||0,index:g.index||0}));
+          heading:g.heading,elevation:g.elevation||0,roll:g.roll||0,index:g.index||0}));
       } else if(stance&&stance.joints) {
         const longGun=safe(()=>solidLongGun(c.currentWeapon)?stanceLongGunPose(c):null,null);
         const bow=safe(()=>c.currentWeapon===WEAPONS.BOW,false),dual=safe(()=>c.currentWeapon===WEAPONS.DUAL_SMG,false);
@@ -638,7 +646,8 @@ function player3DPose(actor, options = {}) {
   const addPart=(mesh,color,matrix,part)=>{
     if(!selected(part))return;
     const flash=hitFlash&&['torso','vest','army_webbing','army_platecarrier','coat','upper_arm','forearm','joint'].includes(mesh);
-    parts.push({mesh,color:options.skeleton?[240,244,238]:flash?flashColor:color,matrix,part});
+    const entry={mesh,color:options.skeleton?[240,244,238]:flash?flashColor:color,matrix,part};
+    parts.push(entry);return entry;
   };
   const oval=(mesh,pos,sx,sy,sz,color,tag,axes=basis)=>addPart(mesh,color,M.matrix(pos,axes.x,axes.y,axes.z,sx,sy,sz),tag);
   const bone=(mesh,a,b,width,color,tag,depth=width)=>addPart(mesh,color,M.segment(a,b,(options.skeleton?width*.32:width)*widthScale,(options.skeleton?depth*.32:depth)*widthScale),tag);
@@ -926,19 +935,28 @@ function player3DPose(actor, options = {}) {
   const showGun=options.weapon!==false&&!options.skeleton&&kind!=='BOXING'&&kind!=='STUN'&&
     (c.isPlayer||!molotov&&!c.isUnarmed&&c.meleeTimer<=0)&&(c.isArmed||c.reloadTimer>0||mode==='QUICKDRAW'||weaponRecords.some(r=>r.mesh));
   if(showGun) {
+    const addWeaponMesh=(name,matrix,tag)=>{
+      const material=meshes?.[name]?.material;
+      const rgb=typeof PLAYER3D_ASSET!=='undefined' && PLAYER3D_ASSET.palette?.[material];
+      return addPart(name,rgb?rgb.map(v=>v*255):material==='wood'?palette.wood:palette.steel,matrix,tag);
+    };
     if(!weaponRecords.length) {
       const count=weaponKey==='dual_smg'?2:1;
       for(let i=0;i<count;i++)weaponRecords.push({hand:sockets[i?'leftHand':'rightHand']||sockets.rightHand,heading:angle,index:i});
     }
     for(const record of weaponRecords) {
-      if(!record.hand)continue;
+      if(!record.hand || (record.index && weaponKey==='dual_smg' && action))continue;
       const name=record.mesh||weaponNames[weaponKey]||weaponKey,tag=record.index?'weapon_secondary':'weapon_primary';
       let muzzle=record.mesh?record.muzzle:nativeMuzzle(record.index||0)||record.muzzle;
       // The bow is held by the support hand; the strong hand draws the
       // string. Firearms keep the strong-side grip as their rigid anchor.
-      const hand=name==='bow'&&sockets.leftHand?sockets.leftHand:record.hand,heading=Number.isFinite(record.heading)?record.heading:angle,el=Number(record.elevation)||0;
+      const bodyMesh=meshes?.[name],sidearm=bodyMesh?.actionTravel>0;
+      const reload=sidearm&&c.reloadTimer>0?clamp(1-c.reloadTimer/90):null;
+      const reloadArc=reload!==null?Math.sin(Math.PI*reload):0;
+      const hand=name==='bow'&&sockets.leftHand?sockets.leftHand:record.hand,heading=Number.isFinite(record.heading)?record.heading:angle;
+      const el=Number(record.elevation)||0;
       const grip=(meshes&&meshes[name]&&meshes[name].grip)||[-.28,0,0],muzzleLocal=(meshes&&meshes[name]&&meshes[name].muzzle)||[.5,0,0],span=Math.max(.01,muzzleLocal[0]-grip[0]);
-      let length=record.length||(['rifle','shotgun','coach_gun','particle_beam'].includes(name)?49:name==='rocket'?57:name==='bow'?40:name==='revolver'?32:24);
+      let length=record.length||player3DWeaponLength(name,span);
       let axis=rotatePoint(Math.cos(el),0,Math.sin(el),heading);
       if(!muzzle)muzzle=add(hand,mul(axis,length*span));
       else {
@@ -946,13 +964,41 @@ function player3DPose(actor, options = {}) {
         axis=M.norm(point(dx,dy,z));length=Math.max(1,Math.hypot(d,z)/span);muzzle.z=hand.z+z;
       }
       let side=M.norm(M.cross(point(0,0,1),axis));if(Math.hypot(side.x,side.y,side.z)<.01)side=rotatePoint(0,1,0,heading);
-      const upAxis=M.norm(M.cross(axis,side));
+      let upAxis=M.norm(M.cross(axis,side));
+      const roll=sidearm && (reload!==null ? .18*reloadArc*(record.index?-1:1) : record.roll);
+      if(roll){
+        side=add(mul(side,Math.cos(roll)),mul(upAxis,Math.sin(roll)));
+        upAxis=M.cross(axis,side);
+      }
       const center=sub(hand,add(mul(axis,grip[0]*length),add(mul(side,grip[1]*length),mul(upAxis,grip[2]*length))));
-      const sourceMaterial=meshes&&meshes[name]&&meshes[name].material;
-      const sourceColor=typeof PLAYER3D_ASSET!=='undefined'&&PLAYER3D_ASSET.palette&&PLAYER3D_ASSET.palette[sourceMaterial];
-      const weaponColor=sourceColor?sourceColor.slice(0,3).map(x=>x*255):sourceMaterial==='wood'?palette.wood:palette.steel;
       const weaponMatrix=M.matrix(center,axis,side,upAxis,length,length,length);
-      addPart(name,weaponColor,weaponMatrix,tag);
+      addWeaponMesh(name,weaponMatrix,tag);
+      if(sidearm){
+        // The body, slide/bolt and magazine use the same Blender origin.
+        // Move the visible action along the mounted gun's axis on each shot.
+        const phase=reload!==null?handGunReloadMechanism(c.currentWeapon,reload,record.index||0):null;
+        const kick=Math.max(handGunKick(c.weaponKick),phase?.slide||0);
+        const actionName=name==='pistol'?'pistol_slide':'smg_bolt';
+        const actionMatrix=kick?M.matrix(sub(center,mul(axis,kick*bodyMesh.actionTravel*length)),
+          axis,side,upAxis,length,length,length):weaponMatrix;
+        addWeaponMesh(actionName,actionMatrix,tag);
+
+        const magazine=name+'_magazine',out=phase?.out||0;
+        let magMatrix=weaponMatrix,alpha=1;
+        if(out){
+          let origin=sub(center,mul(upAxis,out*bodyMesh.magazineTravel*length));
+          const grip=meshes[magazine].grip;
+          if(weaponKey!=='dual_smg' && !action && sockets.leftHand){
+            const gripOffset=add(mul(axis,grip[0]*length),add(mul(side,grip[1]*length),mul(upAxis,grip[2]*length)));
+            origin=mix(origin,sub(sockets.leftHand,gripOffset),reloadEase(out,.35,1));
+          } else alpha=1-reloadEase(out,.35,1);
+          magMatrix=M.matrix(origin,axis,side,upAxis,length,length,length);
+        }
+        if(alpha>0){
+          const part=addWeaponMesh(magazine,magMatrix,tag);
+          if(part && alpha<1)part.alpha=alpha;
+        }
+      }
       // The front hand supports a long gun from below. Keep the original
       // authored XY grip and lower only its real depth; draw order cannot
       // enforce this when the meshes share a depth buffer.

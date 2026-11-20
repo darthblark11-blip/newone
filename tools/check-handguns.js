@@ -118,7 +118,10 @@ function prepare(weapon, heading = 0) {
          player.gait=0; player.walkCycle=0; player.weaponKick=0; player.muzzleFlash=0;
          player.fireTimer=0; player.reloadTimer=0; player.meleeTimer=0; player.dashTimer=0;
          player.throwAnimTimer=0; player.cannonCharge=0; player.cannonFireDelay=0;
-         player.aimHold=14; player.isArmed=true; bullets.length=0;`);
+         player.aimHold=14; player.isArmed=true; bullets.length=0;
+         rightStick.active=true; rightStick.dx=Math.cos(player.aimAngle); rightStick.dy=Math.sin(player.aimAngle); rightStick.dist=.4;
+         // Compare fully raised guns on both sides of a shot or reload boundary.
+         for(let i=0;i<40;i++){frameCount++;updateWeaponPresentation(player,1000/60);}`);
 }
 console.log('\n== native shots, not a synthetic animation timer ==');
 for (const [weapon,x,y,count] of [['PISTOL',31,8,1],['SMG',38,11,1],['DUAL_SMG',38,11,2]]) {
@@ -241,6 +244,48 @@ for (const weapon of ['PISTOL','SMG','DUAL_SMG']) {
      phases[5].guns[0].slideOpen===0 && phases[5].guns[1].slideOpen>0.5);
   ok('the half-reload boundary seats the right magazine before the left begins',
      phases[3].guns.every(g=>g.magOut===0 && g.slideOpen===0));
+}
+
+// Sample the meshes selected by the live 3D pose, in the mounted gun's
+// local frame so that wrist rotation cannot masquerade as slide travel.
+probe(`window.sidearmMeshSample=(c,index)=>{
+  const pose=player3DPose(c),tag=index?'weapon_secondary':'weapon_primary';
+  const parts=pose.parts.filter(p=>p.part===tag),body=parts[0],m=body.matrix;
+  const design=PLAYER3D_ASSET.meshes[body.mesh],action=parts.find(p=>p.mesh=== (body.mesh==='pistol'?'pistol_slide':'smg_bolt'));
+  const mag=parts.find(p=>p.mesh===body.mesh+'_magazine');
+  const travel=action&&[0,1,2].map(k=>m[12+k]-action.matrix[12+k]);
+  const length=Math.hypot(m[0],m[1],m[2]),stroke=travel&&travel.reduce((n,v,k)=>n+v*m[k],0)/(length*length);
+  const project=(matrix,v)=>[0,1,2].map(k=>matrix[12+k]+v.reduce((n,value,axis)=>n+matrix[k+axis*4]*value,0));
+  const muzzle=project(m,design.muzzle),native=aimLaserMuzzle(c,index),magGrip=mag&&project(mag.matrix,PLAYER3D_ASSET.meshes[mag.mesh].grip);
+  return {stroke,expected:design.actionTravel,muzzleError:Math.hypot(muzzle[0]+c.x-native.x,muzzle[1]+c.y-native.y),
+    held:magGrip&&pose.sockets.leftHand&&Math.hypot(...magGrip.map((x,i)=>x-pose.sockets.leftHand[['x','y','z'][i]])),magazine:!!mag};
+};`);
+for(const weapon of ['PISTOL','SMG','DUAL_SMG']){
+  prepare(weapon,.71);probe("resetActorStance(player,'STAND');");
+  const sample=i=>P(`sidearmMeshSample(player,${i})`);
+  const count=weapon==='DUAL_SMG'?2:1;
+  const before=Array.from({length:count},(_,i)=>sample(i));
+  probe('player.fire(player.aimAngle)');
+  const peak=before.map((_,i)=>sample(i));
+  probe('for(let t=0;t<3;t++){frameCount++;player.updatePlayer();}');
+  const mid=before.map((_,i)=>sample(i));
+  probe('for(let t=0;t<4;t++){frameCount++;player.updatePlayer();}');
+  const end=before.map((_,i)=>sample(i));
+  ok(weapon+' Blender action cycles independently on a native shot and returns to rest',
+    before.every((b,i)=>b.stroke===0&&b.expected>0&&close(peak[i].stroke,b.expected,1e-5)&&
+      mid[i].stroke>0&&mid[i].stroke<peak[i].stroke&&end[i].stroke===0));
+  ok(weapon+' fixed 3D muzzle stays on the gameplay origin throughout recoil',
+    [...before,...peak,...mid,...end].every(p=>p.muzzleError<1e-4));
+  probe('player.reloadTimer=55;');
+  if(count===1){
+    const held=sample(0);
+    ok(weapon+' removed magazine follows the animated support hand',held.held<1e-4 && held.magazine);
+  }else{
+    probe('player.reloadTimer=72;');
+    ok('dual SMG reload removes each magazine in turn',!sample(0).magazine&&sample(1).magazine);
+    probe('player.reloadTimer=27;');
+    ok('second SMG reload follows the first',sample(0).magazine&&!sample(1).magazine);
+  }
 }
 
 console.log(`\n${checks-fails}/${checks} checks passed`);

@@ -26,7 +26,7 @@
       "preview": "nm0-armored-soldier.png"
     }
   ],
-  "meshCount": 54,
+  "meshCount": 58,
   "boneCount": 18,
   "runtimeMaterial": "Three-band world-lit shader; glTF retains palette and toon metadata, not Blender node execution.",
   "civilianVariants": [
