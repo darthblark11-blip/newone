@@ -125,6 +125,116 @@ function player3DSupportUnderside(surface,box) {
   return lowest;
 }
 
+// The sole stays on the ground for the support part of its cycle. During
+// recovery the ankle goes over the ground and the heel folds toward the hip.
+function standing3DStep(phase, speed, size) {
+  const t=phase-Math.floor(phase), contact=.58-.13*speed;
+  const reach=(3.8+4.6*speed)*size;
+  if(t<contact) return {along:reach*(1-2*t/contact),lift:0,pitch:0,swing:0};
+  const swing=(t-contact)/(1-contact), arc=Math.sin(Math.PI*swing);
+  const blend=swing*swing*(3-2*swing);
+  return {along:reach*(2*blend-1),lift:(2.8+3.7*speed)*size*arc*arc,
+    pitch:.38*arc*arc*Math.cos(Math.PI*swing),swing};
+}
+
+// Sample displacement after collision resolution, once per simulation update.
+// Store contacts in world space so a change of aim, speed or camera cannot
+// drag the supporting boot along. Rendering reads these contacts without
+// advancing them, including when the shadow draws the same actor again.
+function updateStanding3DContacts(c,dx,dy) {
+  if(!c.isPlayer&&!c.isCityCivilian&&!ENEMY3D_HUMAN_TYPES.has(c.eType))return;
+  if(Player3D.enabled===false || Player3D.failure || c.dead || c.mounted || c.legInjury || c.stunTimer>0 ||
+     c.jetpackHeight>0 || c.knockedOut || c.shovelMantle || c.stance?.value>0 ||
+     boxingActive(c) || dx*dx+dy*dy>900) {
+    c._standing3DContacts=null;return;
+  }
+  const last=c._standing3DContacts;
+  if(last && last.frame===frameCount && last.x===c.x && last.y===c.y)return;
+  // The simulation can stop updating a culled actor or move it to a new map.
+  const fresh=!last || frameCount-last.frame>3 || Math.hypot(c.x-dx-last.x,c.y-dy-last.y)>2;
+  const state=fresh?{phase:0,feet:[{},{}],heading:c.aimAngle||0}:last;
+  const size=Player3DMath.clamp(c.bodyH/27,.86,1.18), speed=Player3DMath.clamp(c.gait);
+  const scale=!fresh && dx===0 && dy===0?state.scale:elevRenderScale(c.x,c.y)*shovelRenderScale(c);
+  const distance=Math.hypot(dx,dy)/scale;
+  const heading=c._standingMotion?.active?c._standingMotion.angle:crouchFacingTarget(c).angle;
+  const turn=Math.atan2(Math.sin(heading-state.heading),Math.cos(heading-state.heading));
+  const stepDistance=2*(3.8+4.6*speed)*size/(.58-.13*speed);
+  state.phase+=(distance+Math.abs(turn)*4.6*size)/stepDistance;
+  const yaw=Math.cos(heading), lateral=Math.sin(heading);
+  const tx=distance>.001?dx/(distance*scale):0, ty=distance>.001?dy/(distance*scale):0;
+  state.x=c.x;state.y=c.y;state.frame=frameCount;state.heading=heading;state.scale=scale;
+  for(let i=0;i<2;i++) {
+    const foot=state.feet[i], side=i?1:-1, step=standing3DStep(state.phase+i*.5,speed,size);
+    const moving=distance>.001 || Math.abs(turn)>.001;
+    const room=(4.8*size)*side, advance=moving?step.along:0;
+    const x=c.x+scale*(tx*advance-lateral*room), y=c.y+scale*(ty*advance+yaw*room);
+    if(fresh){foot.x=x;foot.y=y;foot.lift=0;foot.pitch=0;foot.heading=heading;}
+    if(!moving) {
+      // Complete a swing when travel stops mid-step. A planted sole stays put.
+      const settle=1-Math.exp(-Math.min(100,Math.max(0,deltaTime||0))/75);
+      if(foot.lift>.01){foot.x+=(x-foot.x)*settle;foot.y+=(y-foot.y)*settle;}
+      foot.lift*=1-settle;foot.pitch*=1-settle;foot.recovering=false;
+      continue;
+    }
+    if(step.swing>0){
+      if(!foot.recovering){foot.fromX=foot.x;foot.fromY=foot.y;foot.start=step.swing;}
+      const u=Player3DMath.clamp((step.swing-foot.start)/(1-foot.start)), ease=u*u*(3-2*u);
+      // Predict where the root will be at touchdown. As direction changes
+      // this free foot can re-aim while the support foot retains its contact.
+      const lead=(1-step.swing)*(.42+.13*speed)*stepDistance+(3.8+4.6*speed)*size;
+      const endX=c.x+scale*(tx*lead-lateral*room),endY=c.y+scale*(ty*lead+yaw*room);
+      foot.x=foot.fromX+(endX-foot.fromX)*ease;foot.y=foot.fromY+(endY-foot.fromY)*ease;
+      foot.lift=step.lift;foot.pitch=step.pitch;foot.heading=heading;
+    } else {
+      if(foot.recovering || fresh){foot.x=x;foot.y=y;foot.heading=heading;}
+      foot.lift=0;foot.pitch=0;
+    }
+    foot.recovering=step.swing>0;
+  }
+  c._standing3DContacts=state;
+}
+
+function standing3DLegs(c,p,motion,cycle,air) {
+  const M=Player3DMath,size=M.clamp(c.bodyH/27,.86,1.18),speed=M.clamp(c.gait);
+  const sampled=c._standing3DContacts;
+  const track=sampled && sampled.frame===frameCount && sampled.x===c.x && sampled.y===c.y ? sampled:null;
+  const phase=track?track.phase:cycle/(2*Math.PI);
+  const travel=Number.isFinite(c.moveAngle)?c.moveAngle:p.hipHeading;
+  const axes=M.postureFrame(p.hipHeading);
+  const thigh=8.35*size,shin=8.15*size, hipWidth=c.bodyH*.161;
+  // A fixed upper/lower length pair and lateral sockets replace the sprite's
+  // sliding hip origins. The small vertical drop leaves room to extend on load.
+  // The existing upper body calibrates its torso from the authored spine.
+  // Capture that length before replacing only the lower-body joints.
+  const spine=M.sub(p.head,p.pelvis);
+  p.torsoLength=Math.max(8,Math.hypot(spine.x,spine.y,spine.z)*.48);
+  p.pelvis=M.point(0,0,(16.55-.9*speed*motion)*size+air);
+  p.articulatedStanding=true;
+  for(let i=0;i<2;i++){
+    const side=i?1:-1, foot=track?.feet[i], step=standing3DStep(phase+i*.5,speed,size);
+    const hip=M.add(p.pelvis,M.mul(axes.y,side*hipWidth));
+    const along=step.along*motion, sideOffset=side*4.8*size;
+    const x=foot?(foot.x-c.x)/track.scale:Math.cos(travel)*along+axes.y.x*sideOffset;
+    const y=foot?(foot.y-c.y)/track.scale:Math.sin(travel)*along+axes.y.y*sideOffset;
+    const lift=foot?foot.lift:step.lift*motion;
+    const ankle=M.point(x,y,air+1.5*size+lift);
+    // Avoid crossing the other foot on a lateral reversal, and limit the reach
+    // along the floor so the sole stays down and neither bone stretches.
+    const offset=M.sub(ankle,hip);
+    const across=M.dot(offset,axes.y);
+    const lateral=side*Math.max(1.1*size,hipWidth+side*across)-side*hipWidth;
+    const fore=M.dot(offset,axes.x);
+    const reach=Math.sqrt(Math.max(0,(thigh+shin-.02)**2-offset.z**2));
+    const k=Math.min(1,reach/(Math.hypot(fore,lateral)||1));
+    ankle.x=hip.x+k*(axes.x.x*fore+axes.y.x*lateral);
+    ankle.y=hip.y+k*(axes.x.y*fore+axes.y.y*lateral);
+    const pole=M.add(hip,M.add(M.mul(axes.x,thigh),M.mul(axes.y,side*.07*thigh)));
+    const knee=M.elbow(hip,ankle,thigh,shin,pole);
+    p.legs.push({hip,knee,ankle,heading:(foot?foot.heading:p.hipHeading)+side*.075,
+      pitch:foot?foot.pitch:step.pitch*motion});
+  }
+}
+
 function player3DPose(actor, options = {}) {
   if(!actor)return null;
   const M=Player3DMath,{point,add,sub,mul,mix,rotate,clamp}=M;
@@ -226,8 +336,11 @@ function player3DPose(actor, options = {}) {
         torsoProjectedLength:(stance?stance.torsoLength:bw*(typeof TORSO_DEPTH==='number'?TORSO_DEPTH:.84))*size,
         torsoProjectedWidth:(stance?stance.torsoWidth:bh)*size,headProjectedDiameter:11*size,
         arms:[],legs:[]};
-      const legGeometry=safe(()=>buildHumanLegHitGeometry(c),null);
-      if(stance&&stance.joints) {
+      const articulated=!stance && !c.mounted && mode==='NORMAL' && !c.stunTimer && !c.shovelMantle &&
+        !c.legInjury && !c.dead && !c.isCorpse && !safe(()=>tool==='SHOVEL'&&shovelDigPose(c,gait,0),false);
+      const legGeometry=!articulated && !stance ? safe(()=>buildHumanLegHitGeometry(c),null) : null;
+      if(articulated)standing3DLegs(c,p,motion,cycle,air);
+      else if(stance&&stance.joints) {
         p.legs=stance.joints.map(j=>({hip:local(j.hip.x,j.hip.y,p.pelvis.z),
           knee:local(j.knee.x,j.knee.y,Math.max(2,6*(1-crouch))*(1-.65*floor)+air),
           ankle:local(j.ankle.x,j.ankle.y,1+air),heading:heading+Math.atan2(j.ankle.y-j.knee.y,j.ankle.x-j.knee.x),step:j.step,
@@ -598,10 +711,17 @@ function player3DPose(actor, options = {}) {
   legs.forEach((leg,i)=>{
     const tag=i?'right':'left';if(!leg.hip||!leg.knee||!leg.ankle)return;
     sockets[tag+'Hip']=point(leg.hip.x,leg.hip.y,leg.hip.z);sockets[tag+'Knee']=point(leg.knee.x,leg.knee.y,leg.knee.z);sockets[tag+'Ankle']=point(leg.ankle.x,leg.ankle.y,leg.ankle.z);
-    bone('thigh',leg.hip,leg.knee,R.thighW,palette.pants,'thigh_'+tag);
-    bone('shin',leg.knee,leg.ankle,R.shinW,palette.pants,'shin_'+tag);
+    bone('thigh',leg.hip,leg.knee,R.thighW*(p.articulatedStanding?.82:1),palette.pants,'thigh_'+tag);
+    bone('shin',leg.knee,leg.ankle,R.shinW*(p.articulatedStanding?.86:1),palette.pants,'shin_'+tag);
     const direction=Number.isFinite(leg.heading)?leg.heading:angle;
-    if(nativeFrames) {
+    if(p.articulatedStanding) {
+      const axes=M.postureFrame(direction,leg.pitch||0);
+      const bootHeight=4*clamp(bh/27,.86,1.18);
+      // The ankle socket is .22 above the boot origin and the sole is at -.155.
+      const center=sub(add(leg.ankle,mul(axes.x,R.foot*.25)),mul(axes.z,.22*bootHeight));
+      addPart('foot',palette.boot,M.matrix(center,axes.x,axes.y,axes.z,R.foot*.94,R.shinW*1.16,bootHeight),'foot_'+tag);
+      sockets[tag+'Foot']=center;
+    } else if(nativeFrames) {
       const scale=leg.widths?leg.widths[1]/R.shinW:1;
       const center=add(leg.ankle,rotatePoint((stance?1.5*scale:R.foot*.34)*widthScale,0,.2,direction));
       fittedOval('foot',center,R.foot*scale*widthScale,R.shinW*(stance?.82:.80)*scale*widthScale,R.shinW*.45*widthScale,palette.boot,'foot_'+tag,M.postureFrame(direction),direction);

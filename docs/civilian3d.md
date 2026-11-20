@@ -11,6 +11,8 @@ The four Level 1 city residents use the shared human rig and posed model shadows
 
 The garments attach to the chest so the shoulders can turn independently of the hips. Each street gesture follows the existing activity clock and hand target. The prop follows the resulting wrist position as the character raises or lowers it. The cigarette wisp starts at the projected ember. [Watch the in-game poses](city-residents.webp).
 
+Standing characters now step from two fixed hip sockets. Each knee bends toward its own ankle target, and the supporting foot holds a ground contact as the body moves. The same lower-body rig drives the player and living human enemies. [Walking, strafing and backpedaling](standing-footwork.webp).
+
 ## Editing and rebuilding
 
 The editable models are in `assets/player/player.blend`, in **City civilian variants** and **City street wardrobe**. Each resident also has a portable rigged GLB listed in [the asset manifest](../assets/player/manifest.json).

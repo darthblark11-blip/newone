@@ -1,6 +1,6 @@
-// Compare the live mesh pose with the original painter's actual projected
-// anatomy. This deliberately records native drawing calls, rather than
-// blessing finite matrices or duplicating the replacement pose arithmetic.
+// Record the original painter's projected anatomy for native contacts and
+// stances. The standing legs use the separate XYZ rig checked in
+// check-player3d-standing-gait.js.
 const assert = require('node:assert/strict');
 const {ctx, probe} = require('./harness');
 const P = source => probe('(' + source + ')');
@@ -115,6 +115,7 @@ function compare(label,{stance='STAND'}={}){
  const native=nativeTrace(),snapshot=P('player3DPose(player)'),s=snapshot.sockets;
  pointCheck(s.head,native.head,label+' head follows native body frame');
  const head=snapshot.parts.find(p=>p.part==='head');if(head)compareOval(head,native.head,label+' head');
+ const articulated=snapshot.pose.articulatedStanding;
  const torso=snapshot.parts.find(p=>p.part==='torso');
  pointCheck({x:torso.matrix[12],y:torso.matrix[13]},native.torso.center,label+' torso follows native bob/lean');
  const nativeChestAngle=Math.atan2(native.torso.matrix[1],native.torso.matrix[0]);
@@ -146,13 +147,19 @@ function compare(label,{stance='STAND'}={}){
   if(hand&&nativeHand)compareOval(hand,nativeHand,label+' '+side+' hand');
  }
  native.boots.slice(0,2).forEach((boot,i)=>{const side=i?'right':'left',part=snapshot.parts.find(p=>p.part==='foot_'+side);
-  check(!!part,label+' '+side+' has a boot mesh');if(part)compareOval(part,boot,label+' '+side+' boot');});
+  check(!!part,label+' '+side+' has a boot mesh');
+  if(part&&articulated){
+   const center=projectedCenter(part,snapshot.pose.legs[i].heading),ankle=s[side+'Ankle'];
+   check(Math.hypot(center.x-ankle.x,center.y-ankle.y)<boot.width,label+' '+side+' boot stays attached to ankle');
+  }else if(part)compareOval(part,boot,label+' '+side+' boot');});
  check(native.boots.length===2,label+' has two original boot references');
  if(stance==='STAND'){
-  native.legs.slice(0,2).forEach((leg,i)=>{const side=i?'right':'left';
-   pointCheck(s[side+'Hip'],leg.shoulder,label+' '+side+' hip');
-   pointCheck(s[side+'Knee'],leg.elbow,label+' '+side+' knee');
-   pointCheck(s[side+'Ankle'],leg.hand,label+' '+side+' ankle');});
+  if(!articulated){
+   native.legs.slice(0,2).forEach((leg,i)=>{const side=i?'right':'left';
+    pointCheck(s[side+'Hip'],leg.shoulder,label+' '+side+' hip');
+    pointCheck(s[side+'Knee'],leg.elbow,label+' '+side+' knee');
+    pointCheck(s[side+'Ankle'],leg.hand,label+' '+side+' ankle');});
+  }
   const lower=P('standingLowerPose(player)'),pelvis=snapshot.parts.find(p=>p.part==='pelvis');
   if(lower&&pelvis){const heading=Math.atan2(pelvis.matrix[5],pelvis.matrix[4])-Math.PI/2;
    check(Math.abs(wrap(heading-lower.angle))<.025,label+' pelvis retains independent locomotion heading');}
