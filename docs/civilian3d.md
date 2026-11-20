@@ -11,7 +11,9 @@ The four Level 1 city residents use the shared human rig and posed model shadows
 
 The garments attach to the chest so the shoulders can turn independently of the hips. Each street gesture follows the existing activity clock and hand target. The prop follows the resulting wrist position as the character raises or lowers it. The cigarette wisp starts at the projected ember. [Watch the in-game poses](city-residents.webp).
 
-Standing characters now step from two fixed hip sockets. Each knee bends toward its own ankle target, and the supporting foot holds a ground contact as the body moves. The same lower-body rig drives the player and living human enemies. [Walking, strafing and backpedaling](standing-footwork.webp).
+City residents and living human enemies step from fixed hip sockets and plant the supporting foot. [Civilian walk and soldier backstep](standing-footwork.webp).
+
+The player uses the planted-foot rig when leaning against high cover. On open ground the player uses the original run cycle, with long strides and a broad denim cuff over the trailing shoe. [Player run and backpedal](player-run.webp) · [High-cover lean](cover-pivot.webp).
 
 ## Editing and rebuilding
 

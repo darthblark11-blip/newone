@@ -383,11 +383,13 @@ function player3DPose(actor, options = {}) {
         torsoProjectedLength:(stance?stance.torsoLength:bw*(typeof TORSO_DEPTH==='number'?TORSO_DEPTH:.84))*size,
         torsoProjectedWidth:(stance?stance.torsoWidth:bh)*size,headProjectedDiameter:11*size,
         arms:[],legs:[]};
-      const articulated=!stance && !c.mounted && mode==='NORMAL' && !c.stunTimer && !c.shovelMantle &&
-        !c.legInjury && !c.dead && !c.isCorpse && !safe(()=>tool==='SHOVEL'&&shovelDigPose(c,gait,0),false);
-      const legGeometry=!articulated && !stance ? safe(()=>buildHumanLegHitGeometry(c),null) : null;
+      // Open-ground player strides and the broad trailing denim cuff follow the
+      // authored walkCycle. The player uses planted 3D legs when bracing in cover.
+      const articulatedNPC=!c.isPlayer && !stance && !c.mounted && mode==='NORMAL' && !c.stunTimer &&
+        !c.shovelMantle && !c.legInjury && !c.dead && !c.isCorpse;
+      const legGeometry=!articulatedNPC && !stance ? safe(()=>buildHumanLegHitGeometry(c),null) : null;
       const coverLegs=mode==='NORMAL' && stance && player3DHighCoverLegs(c,stance);
-      if(articulated || coverLegs) {
+      if(articulatedNPC || coverLegs) {
         // Torso proportions are calibrated before the anatomical hip sockets move.
         const spine=sub(p.head,p.pelvis);
         p.torsoLength=Math.max(8,Math.hypot(spine.x,spine.y,spine.z)*.48);

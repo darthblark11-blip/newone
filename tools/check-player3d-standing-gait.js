@@ -12,9 +12,35 @@ probe(`started=doTick=true;isPaused=isDead=isWin=killcamMode=false;
 
 const delta = (a,b) => [a.x-b.x,a.y-b.y,a.z-b.z];
 const dot = (a,b) => a.reduce((sum,v,i) => sum+v*b[i],0);
+// The player's original running silhouette is driven by walkCycle. The wide
+// trouser end passes behind the narrow boot on backward and diagonal travel.
+const rig=probe('figureRig(player.bodyW,player.bodyH)');
+let playerSamples=0;
+for(const [gait,turn] of [[0,0],[.4,0],[1,0],[1,Math.PI/2],[1,Math.PI*.75],[1,Math.PI]]){
+  probe(`player.isMoving=${gait>0};player.gait=${gait};player.aimAngle=.3;player.moveAngle=.3+${turn};
+    player.currentWeapon=WEAPONS.PISTOL;resetActorStance(player,'STAND');`);
+  for(let step=0;step<=8;step++){
+    probe(`{frameCount++;player.walkCycle=${step*Math.PI/4};
+      const dx=player.isMoving?Math.cos(player.moveAngle)*4:0,dy=player.isMoving?Math.sin(player.moveAngle)*4:0;
+      player.x+=dx;player.y+=dy;rememberFigureMotion(player,dx,dy);}`);
+    const native=probe('buildHumanLegHitGeometry(player)'),{pose,parts}=probe('player3DPose(player)');
+    const co=Math.cos(native.angle),si=Math.sin(native.angle);
+    for(const [i,leg] of pose.legs.entries()){
+      const ref=native.legs[i],side=i?'right':'left',label=[gait,turn,step,side].join('/');
+      for(const [joint,x,y] of [[leg.hip,ref.sx,ref.sy],[leg.knee,ref.kx,ref.ky],[leg.ankle,ref.ax,ref.ay]]){
+        assert.ok(Math.hypot(joint.x-(co*x-si*y),joint.y-(si*x+co*y))<1e-5,label+' follows original stride phase and reach');
+      }
+      for(const [mesh,width] of [['thigh',rig.thighW],['shin',rig.shinW]]){
+        const m=parts.find(part=>part.part===mesh+'_'+side).matrix;
+        assert.ok(Math.abs(Math.hypot(m[4],m[5],m[6])-width)<1e-5,label+' retains full '+mesh+' denim width');
+      }
+    }
+    playerSamples++;
+  }
+}
 let samples = 0, plantedFrames = 0;
-for (const role of ['player','enemy','city']) {
-  const actor = {player:'player',enemy:"new Character(0,0,false,'NORMAL')",city:"new Character(0,0,false,'CITY_CITIZEN_F')"}[role];
+for (const role of ['enemy','city']) {
+  const actor = {enemy:"new Character(0,0,false,'NORMAL')",city:"new Character(0,0,false,'CITY_CITIZEN_F')"}[role];
   const options = role==='city' ? '{npc:true,weapon:false}' : '{}';
   probe(`var walker=${actor};walker.aimAngle=.3;walker.gait=0;walker.isMoving=false;
     walker.walkCycle=walker.stunTimer=walker.meleeTimer=walker.reloadTimer=0;
@@ -62,7 +88,7 @@ for (const role of ['player','enemy','city']) {
 
   // Walk the actor through a contact exchange using the actual simulation
   // sampling entry point. Compare rendered ankles in world coordinates.
-  const turn = {player:0, enemy:Math.PI, city:Math.PI/2}[role];
+  const turn = role==='enemy'?Math.PI:Math.PI/2;
   probe(`walker.gait=.65;walker.moveAngle=walker.aimAngle+${turn};
     var stepX=Math.cos(walker.moveAngle),stepY=Math.sin(walker.moveAngle);`);
   const floor = rest.legs[0].ankle.z, contacts = [0,0];
@@ -125,4 +151,4 @@ for(const trackContacts of [false,true])for(const end of [-1,1]){
     coverSamples++;
   }
 }
-console.log(samples+' standing gait samples, '+plantedFrames+' planted-foot comparisons and '+coverSamples+' high-cover poses passed');
+console.log(playerSamples+' original player stride samples, '+samples+' NPC gait samples, '+plantedFrames+' planted-foot comparisons and '+coverSamples+' high-cover poses passed');
